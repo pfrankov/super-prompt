@@ -1,0 +1,406 @@
+{
+  "app": {
+    "title": "Super-Prompt",
+    "subtitle": "Optimize Anything"
+  },
+  "nav": {
+    "tasks": "Prompts",
+    "settings": "Settings",
+    "newTask": "Improve prompt"
+  },
+  "common": {
+    "save": "Save",
+    "cancel": "Cancel",
+    "delete": "Delete",
+    "edit": "Edit",
+    "create": "Create",
+    "close": "Close",
+    "confirm": "Confirm",
+    "back": "Back",
+    "next": "Next",
+    "open": "Open",
+    "search": "Search",
+    "loading": "Loading…",
+    "empty": "Nothing here yet",
+    "yes": "Yes",
+    "no": "No",
+    "or": "or",
+    "import": "Import",
+    "export": "Export",
+    "generate": "Generate",
+    "run": "Run",
+    "copy": "Copy",
+    "copied": "Copied",
+    "all": "All",
+    "none": "None",
+    "untitled": "Untitled",
+    "unsaved": "Unsaved changes",
+    "dropHere": "Drop your file here",
+    "invalidType": "Unsupported file type. Use .jsonl, .ndjson, .csv, or .tsv.",
+    "saving": "Saving…"
+  },
+  "home": {
+    "title": "Prompts",
+    "subtitle": "Improve a prompt for the model that will actually run it.",
+    "emptyTitle": "No prompts yet",
+    "emptyBody": "Paste a prompt, choose the target model, and let Super-Prompt build the test set.",
+    "newTask": "Improve prompt",
+    "open": "Open",
+    "delete": "Delete",
+    "confirmDelete": "Delete this task?",
+    "noDescription": "No description"
+  },
+  "task": {
+    "name": "Name",
+    "namePlaceholder": "Translate EN→RU formal",
+    "description": "Task description",
+    "descriptionPlaceholder": "What the model is supposed to do, in plain words.",
+    "initialPrompt": "Initial system prompt",
+    "initialPromptPlaceholder": "You are an assistant that…",
+    "seedPrompts": "Seed prompts",
+    "seedPromptPlaceholder": "An alternative starting prompt",
+    "addSeed": "Add seed",
+    "rubric": "Judge rubric",
+    "rubricPlaceholder": "Faithfulness, formality, fluency (0–10).",
+    "tabs": {
+      "improve": "Improve",
+      "overview": "Overview",
+      "dataset": "Examples",
+      "optimize": "Improve",
+      "history": "History"
+    },
+    "delete": {
+      "title": "Delete task?",
+      "body": "This will permanently delete the task, its dataset, and all runs.",
+      "confirmPrompt": "Type the task name to confirm:",
+      "confirmPlaceholder": "Type task name"
+    }
+  },
+  "dataset": {
+    "title": "Examples",
+    "subtitle": "Inputs (and optional expected outputs) used to evaluate prompts.",
+    "emptyTitle": "No examples",
+    "emptyBody": "Add at least 2 examples before optimizing.",
+    "addItem": "Add item",
+    "input": "Input",
+    "expected": "Expected output",
+    "notes": "Notes",
+    "actions": "Actions",
+    "rows_one": "{count} example",
+    "rows_other": "{count} examples",
+    "noDataset": "No dataset yet",
+    "namePlaceholder": "Default",
+    "generate": {
+      "title": "Generate dataset",
+      "body": "Ask the judge model to invent examples based on your task description.",
+      "count": "How many examples",
+      "preview": "Preview",
+      "commit": "Add to dataset",
+      "regenerate": "Regenerate",
+      "extraContext": {
+        "label": "Extra context (optional)",
+        "placeholder": "e.g. Focus on formal business emails, 2–3 sentences each"
+      }
+    },
+    "import": {
+      "title": "Import dataset",
+      "drop": "Drop a .jsonl or .csv file here",
+      "or": "or",
+      "browse": "Browse",
+      "preview": "Preview first 5 rows",
+      "commit": "Import",
+      "rowsTotal": "{count} rows total"
+    },
+    "export": "Export"
+  },
+  "improve": {
+    "title": "Improve a prompt",
+    "subtitle": "Paste a prompt and target model. Super-Prompt builds examples, checks models, then runs GEPA.",
+    "promptLabel": "Prompt to improve",
+    "promptPlaceholder": "Paste the system prompt you use today…",
+    "primary": "Improve prompt",
+    "regenerateExamples": "Regenerate examples",
+    "check": "Check models",
+    "judgeLabel": "Judge + mutator",
+    "stage": {
+      "title": "Improvement process",
+      "now": "Now",
+      "iteration": "Iteration {current}/{total}",
+      "samples": "Examples {current}/{total}",
+      "scores": "parent {parent} · challenger {child}",
+      "steps": {
+        "idle": "Waiting",
+        "intake": "Examples",
+        "preflight": "Checks",
+        "starting": "Start",
+        "selecting": "Parent",
+        "mutating": "Mutation",
+        "sampling": "Sample",
+        "answering": "Answers",
+        "judging": "Judge",
+        "scoring": "Score",
+        "persisting": "Save",
+        "paused": "Paused",
+        "stopped": "Stopped",
+        "completed": "Done",
+        "failed": "Failed"
+      },
+      "detail": {
+        "idle": "The run starts after examples and model checks are ready.",
+        "intake": "Building evaluation examples and a rubric from the current prompt.",
+        "preflight": "Checking target reachability, judge JSON, and mutator JSON.",
+        "starting": "Creating the run and preparing the first candidates.",
+        "selecting": "Selected parent {parent} with score {score}.",
+        "mutating": "The mutator is creating a challenger from judge feedback.",
+        "sampling": "Picked {count} examples for this comparison.",
+        "answering": "The target model is answering example {current}/{total} for both prompts.",
+        "judging": "The judge is comparing answer pair {current}/{total}.",
+        "scoring": "Updating scores: parent {parent}, challenger {child}.",
+        "persisting": "Saving the iteration, answer pairs, and new candidate.",
+        "paused": "The run is paused.",
+        "stopped": "The run is stopped.",
+        "completed": "Best score found: {score}.",
+        "failed": "The run failed."
+      }
+    },
+    "setup": {
+      "title": "Run setup",
+      "ready": "Ready",
+      "needsExamples": "{count} more"
+    },
+    "status": {
+      "generating": "Generating eval examples…",
+      "examplesReady": "Examples are ready.",
+      "preflight": "Checking provider, target, judge, and mutator…",
+      "preflightFailed": "Model checks need attention before the run.",
+      "ready": "All checks passed.",
+      "starting": "Starting GEPA…",
+      "providerNeeded": "Add an API key or use a local provider before examples can be generated.",
+      "modelNeeded": "Choose the target model first.",
+      "manualExamplesPreserved": "Manual or imported examples are preserved. Delete them first if you want generated examples."
+    },
+    "examples": {
+      "title": "Examples",
+      "body": "Auto-generated from the prompt. Imported or edited examples stay untouched.",
+      "empty": "They will appear here after you paste a prompt."
+    },
+    "preflight": {
+      "title": "Model checks",
+      "ready": "Ready",
+      "needsWork": "Needs attention"
+    },
+    "result": {
+      "title": "Best prompt",
+      "body": "Copy it, apply it as the new current prompt, or inspect the full GEPA history below.",
+      "apply": "Apply as current",
+      "emptyTitle": "Best prompt will appear here",
+      "emptyBody": "The first run starts after examples and model checks are ready."
+    }
+  },
+  "run": {
+    "title": "Optimize",
+    "subtitle": "Watch your prompt improve, one iteration at a time.",
+    "config": "Configuration",
+    "iterationsCap": "Max iterations",
+    "tokenBudget": "Token budget",
+    "concurrency": "Concurrency",
+    "sampleSize": "Examples per iteration",
+    "earlyStop": "Early stop (no improvement)",
+    "advanced": "Advanced run settings",
+    "temperatures": "Temperatures",
+    "judgeTemp": "Judge",
+    "targetTemp": "Target",
+    "mutatorTemp": "Mutator",
+    "start": "Optimize prompt",
+    "pause": "Pause",
+    "resume": "Resume",
+    "stop": "Stop",
+    "compare": "Compare A vs B",
+    "noRun": "No active run",
+    "empty": "Press Start to begin the optimization loop.",
+    "status": {
+      "running": "Running",
+      "paused": "Paused",
+      "stopped": "Stopped",
+      "completed": "Completed",
+      "failed": "Failed"
+    },
+    "stats": {
+      "iteration": "Iteration",
+      "bestScore": "Best score",
+      "lastDelta": "Last delta",
+      "tokensIn": "Tokens in",
+      "tokensOut": "Tokens out",
+      "eta": "ETA",
+      "samples": "Samples",
+      "wins": "Wins",
+      "losses": "Losses",
+      "ties": "Ties"
+    },
+    "tokensLeft": "Tokens left",
+    "noImprovement": "No improvement for {n} iterations",
+    "export": "Export best + history",
+    "imported": "Exported",
+    "plan": {
+      "title": "Smart plan",
+      "local": "Local",
+      "cloud": "Cloud",
+      "localBody": "Gentle local run: one request at a time, small samples, early stop on plateaus.",
+      "cloudBody": "Balanced defaults for a hosted model: enough comparisons to move, without turning every run into a long job.",
+      "iterations": "{count} iterations",
+      "examples": "{count} examples/iter",
+      "concurrency": "{count} at once",
+      "custom": "Custom",
+      "apply": "Restore smart plan"
+    },
+    "readiness": {
+      "title": "Ready to start",
+      "prompt": "Initial prompt",
+      "dataset": "{count}/2 examples",
+      "provider": "Provider configured"
+    }
+  },
+  "chart": {
+    "title": "Score over iterations",
+    "xAxis": "Iteration",
+    "yAxis": "Score",
+    "noData": "No iterations yet",
+    "tooltipIter": "Iter {n}",
+    "tooltipScore": "Score {s}"
+  },
+  "candidate": {
+    "title": "Candidates",
+    "score": "Score",
+    "parent": "Parent",
+    "tokens": "Tokens",
+    "diff": "Diff",
+    "rationale": "Rationale",
+    "viewIteration": "View iteration",
+    "noParent": "Seed"
+  },
+  "iteration": {
+    "title": "Iteration {n}",
+    "samples": "Samples",
+    "pairs": "Pairwise judgments",
+    "verdict": "Verdict",
+    "outputA": "Output A",
+    "outputB": "Output B",
+    "winner": "Winner",
+    "scores": "Scores",
+    "feedback": "Aggregated feedback"
+  },
+  "history": {
+    "title": "History",
+    "emptyTitle": "No runs yet",
+    "emptyBody": "Start an optimization run to see it here.",
+    "metrics": {
+      "iters": "iters",
+      "tokens": "tokens",
+      "best": "best"
+    },
+    "status": {
+      "running": "Running",
+      "paused": "Paused",
+      "stopped": "Stopped",
+      "completed": "Completed",
+      "failed": "Failed"
+    },
+    "source": {
+      "seed": "seed",
+      "mutated": "mutated"
+    }
+  },
+  "sidebar": {
+    "version": "v0.1"
+  },
+  "compare": {
+    "title": "Compare A vs B",
+    "promptA": "Prompt A",
+    "promptB": "Prompt B",
+    "items": "Items",
+    "all": "All items",
+    "selected": "{n} selected",
+    "run": "Run comparison",
+    "results": "Results",
+    "winnerA": "A wins",
+    "winnerB": "B wins",
+    "tie": "Tie",
+    "perItem": {
+      "title": "Per-item verdicts ({n})",
+      "winner": "Winner: {w}",
+      "scores": "A {a} / B {b}"
+    }
+  },
+  "settings": {
+    "title": "Settings",
+    "subtitle": "Provider, models, language.",
+    "provider": "Provider",
+    "label": "Label",
+    "baseUrl": "Base URL",
+    "apiKey": "API key",
+    "targetModel": "Target model",
+    "judgeModel": "Judge + mutator model",
+    "judgeModelHint": "Used for scoring and prompt mutations while the separate arbitrator is off.",
+    "ollamaTitle": "Local Ollama",
+    "ollamaBody": "Detect a local Ollama server and use one chat model for target, judge, and mutator.",
+    "ollamaUse": "Use local Ollama",
+    "ollamaPicked": "Using {model}",
+    "ollamaFailed": "Local Ollama was not found",
+    "demoTitle": "Demo provider",
+    "demoBody": "Run the full improvement process on mock models without an API key or network.",
+    "demoUse": "Use demo",
+    "demoPicked": "Demo provider is active",
+    "localNoKey": "Local and demo providers can leave the API key empty.",
+    "useTargetForJudge": "Use target model for judge too",
+    "arbitrator": "Separate arbitrator",
+    "arbitratorBody": "Route judge (and mutator) calls to a different endpoint or model. Off — the default judge model is used.",
+    "arbitratorEnable": "Enable separate arbitrator",
+    "arbitratorUrl": "Arbitrator URL",
+    "arbitratorApiKey": "Arbitrator API key",
+    "arbitratorModel": "Separate arbitrator model",
+    "arbitratorHint": "When enabled, both the judge and the mutator use this endpoint. The mutator always reuses the arbitrator's model.",
+    "test": "Test connection",
+    "testOk": "Connection works",
+    "testFail": "Connection failed",
+    "language": "Language",
+    "english": "English",
+    "russian": "Русский",
+    "danger": "Danger zone",
+    "wipe": "Wipe all data",
+    "wipeConfirm": "Type DELETE to confirm:",
+    "wiped": "All data wiped",
+    "apiKeyWarning": "Stored locally in plain text — visible to anyone with access to this browser.",
+    "showKey": "Show",
+    "hideKey": "Hide",
+    "forget": "Forget",
+    "advanced": "Advanced",
+    "timeout": "Request timeout (ms)",
+    "maxRetries": "Max retries"
+  },
+  "errors": {
+    "network": "Network error",
+    "judgeParse": "Judge response could not be parsed",
+    "mutatorParse": "Mutator response could not be parsed",
+    "noProvider": "Configure a provider in Settings first.",
+    "noDataset": "Add at least 2 examples to the dataset.",
+    "noPrompt": "Define an initial prompt.",
+    "quotaExceeded": "Browser storage is full. Export your data and prune old runs.",
+    "workerCrashed": "Worker crashed: {msg}",
+    "restart": "Restart",
+    "corsHint": "If the request fails, the provider may not allow browser CORS."
+  },
+  "toast": {
+    "saved": "Saved",
+    "deleted": "Deleted",
+    "imported": "Imported",
+    "exported": "Exported",
+    "error": "Something went wrong"
+  },
+  "actions": {
+    "save": "Save",
+    "saved": "Saved",
+    "createTask": "Create task",
+    "addItem": "Add",
+    "deleteRow": "Delete row"
+  }
+}
