@@ -102,7 +102,6 @@
     config.mutatorTemperature = $settings.mutatorTemperature
   })
 
-  const plan = $derived(smartPlan($settings.provider.baseUrl, items.length))
   const promptFingerprintNow = $derived(promptFingerprint(task.initialPrompt))
   const canGenerateExamples = $derived(
     !!task.initialPrompt.trim()
@@ -820,27 +819,19 @@
         {/if}
       </div>
 
-      <div class="setup-section">
-        <div class="section-head">
-          <span>{$_('run.plan.title')}</span>
-          <Tag tone={configEdited ? 'warn' : plan.kind === 'local' ? 'info' : 'accent'}>
-            {configEdited ? $_('run.plan.custom') : $_(plan.kind === 'local' ? 'run.plan.local' : 'run.plan.cloud')}
-          </Tag>
-        </div>
-        <p class="panel-copy">
-          {configEdited
-            ? $_('run.plan.customBody')
-            : $_(plan.kind === 'local' ? 'run.plan.localBody' : 'run.plan.cloudBody')}
-        </p>
+      <details>
+        <summary>
+          <span>{$_('run.advanced')}</span>
+          {#if configEdited}
+            <Tag tone="warn">{$_('run.plan.custom')}</Tag>
+          {/if}
+        </summary>
         {#if configEdited}
-          <div class="setup-actions">
+          <div class="settings-reset">
+            <p>{$_('run.plan.customBody')}</p>
             <Button size="sm" variant="ghost" onclick={applySmartPlan}>{$_('run.plan.apply')}</Button>
           </div>
         {/if}
-      </div>
-
-      <details>
-        <summary>{$_('run.advanced')}</summary>
         <div class="fields">
           <NumberField bind:value={config.iterationsCap} label={$_('run.iterationsCap')} tooltip={$_('run.hints.iterationsCap')} min={1} max={500} oninput={markConfigEdited} />
           <NumberField bind:value={config.concurrency} label={$_('run.concurrency')} tooltip={$_('run.hints.concurrency')} min={1} max={16} oninput={markConfigEdited} />
@@ -1300,10 +1291,6 @@
     color: var(--ink-3);
     font-size: var(--fs-sm);
   }
-  .setup-actions {
-    display: flex;
-    justify-content: flex-start;
-  }
   details {
     border-top: 1px solid var(--border-1);
     padding-top: var(--s-3);
@@ -1331,6 +1318,24 @@
   details[open] summary::after {
     content: "-";
     color: var(--primary);
+  }
+  .settings-reset {
+    display: grid;
+    gap: var(--s-2);
+    margin-top: var(--s-3);
+    padding: var(--s-3);
+    border: 1px solid var(--border-1);
+    border-radius: var(--r-sm);
+    background: color-mix(in srgb, var(--bg-2) 72%, black);
+  }
+  .settings-reset p {
+    margin: 0;
+    color: var(--ink-3);
+    font-size: var(--fs-xs);
+    line-height: 1.45;
+  }
+  .settings-reset :global(.btn) {
+    justify-self: start;
   }
   .fields {
     display: grid;

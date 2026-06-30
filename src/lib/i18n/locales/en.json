@@ -276,15 +276,7 @@
     "export": "Export best + history",
     "imported": "Exported",
     "plan": {
-      "title": "Smart plan",
-      "local": "Local",
-      "cloud": "Cloud",
-      "localBody": "Gentle local run: one request at a time, small samples, early stop on plateaus.",
-      "cloudBody": "Balanced defaults for a hosted model: enough comparisons to move, without turning every run into a long job.",
       "customBody": "Manual run settings are active. Restore the smart plan if you want the app to choose the defaults again.",
-      "iterations": "{count} iterations",
-      "examples": "{count} examples/iter",
-      "concurrency": "{count} at once",
       "custom": "Custom",
       "apply": "Restore smart plan"
     },
