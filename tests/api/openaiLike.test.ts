@@ -123,6 +123,28 @@ describe('chatCompletion', () => {
       vi.useRealTimers()
     }
   })
+
+  it('does not serialize same-model requests when no RPM rule is configured', async () => {
+    let releaseFetch!: () => void
+    const blocked = new Promise<Response>((resolve) => {
+      releaseFetch = () => resolve(okResponse('ok'))
+    })
+    ;(global.fetch as any).mockReturnValue(blocked)
+
+    const req = {
+      baseUrl: 'http://l',
+      apiKey: 'k',
+      model: 'unlimited-model',
+      messages: [],
+    }
+    const first = chatCompletion(req)
+    const second = chatCompletion(req)
+
+    await Promise.resolve()
+    expect(global.fetch).toHaveBeenCalledTimes(2)
+    releaseFetch()
+    await expect(Promise.all([first, second])).resolves.toHaveLength(2)
+  })
 })
 
 describe('chatCompletionWithRetry', () => {

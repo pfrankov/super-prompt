@@ -224,6 +224,7 @@
       "title": "Best prompt",
       "body": "Copy it, apply it as the new current prompt, or inspect the full GEPA history below.",
       "apply": "Apply as current",
+      "current": "Current prompt",
       "emptyTitle": "Best prompt will appear here",
       "emptyBody": "The first run starts after examples are ready."
     }

@@ -122,6 +122,7 @@
           null
         )
   )
+  const bestIsCurrent = $derived(!!bestCandidate && task.initialPrompt.trim() === bestCandidate.text.trim())
   const chartPoints = $derived(
     $optimizationState.history.map((h) => ({
       iter: h.index + 1,
@@ -245,7 +246,25 @@
         changeSummary: flowError || nextAction || flowMessage,
       }
     }
-    return $optimizationState.stage
+    if ($optimizationState.stage) return $optimizationState.stage
+    if (
+      run
+      && (
+        run.status === 'paused'
+        || run.status === 'stopped'
+        || run.status === 'completed'
+        || run.status === 'failed'
+      )
+    ) {
+      return {
+        key: run.status,
+        iteration: run.iterationCount,
+        totalIterations: run.config.iterationsCap,
+        changeSummary: run.errorMessage ?? undefined,
+        updatedAt: run.finishedAt ?? Date.now(),
+      }
+    }
+    return null
   }
 
   function phaseForStage(key: RunStageKey | null): PhaseKey | null {
@@ -561,7 +580,7 @@
   }
 
   async function applyBest() {
-    if (!bestCandidate) return
+    if (!bestCandidate || bestIsCurrent) return
     task = { ...task, initialPrompt: bestCandidate.text }
     await saveTask(taskSnapshot())
     t.success($_('actions.saved'))
@@ -818,7 +837,9 @@
       <pre>{bestCandidate.text}</pre>
       <div class="result-actions">
         <Button size="sm" onclick={copyBest}>{$_('common.copy')}</Button>
-        <Button size="sm" variant="secondary" onclick={applyBest}>{$_('improve.result.apply')}</Button>
+        <Button size="sm" variant="secondary" onclick={applyBest} disabled={bestIsCurrent}>
+          {bestIsCurrent ? $_('improve.result.current') : $_('improve.result.apply')}
+        </Button>
         <Button size="sm" variant="ghost" onclick={() => (compareOpen = true)}>{$_('run.compare')}</Button>
         <Button size="sm" variant="ghost" onclick={exportBest}>{$_('common.export')}</Button>
       </div>

@@ -19,10 +19,13 @@
     return { sign: diff > 0 ? 'up' : 'down', value: diff }
   })
 
-  const tokensTotal = $derived(run ? run.totalTokensIn + run.totalTokensOut : 0)
-  const iterRate = $derived(run && run.iterationCount > 0 ? tokensTotal / run.iterationCount : 2000)
-  const remaining = $derived(run ? Math.max(0, run.config.iterationsCap - run.iterationCount) : 0)
-  const etaMs = $derived(remaining * (iterRate / Math.max(1, run?.config.concurrency ?? 1)))
+  const etaMs = $derived.by(() => {
+    if (!run || run.status !== 'running' || run.iterationCount <= 0) return 0
+    const remaining = Math.max(0, run.config.iterationsCap - run.iterationCount)
+    const elapsedMs = Date.now() - run.startedAt
+    if (remaining <= 0 || elapsedMs <= 0) return 0
+    return remaining * (elapsedMs / run.iterationCount)
+  })
 </script>
 
 <div class="grid">

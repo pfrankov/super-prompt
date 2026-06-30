@@ -40,9 +40,10 @@ export function modelRouteKey(route: ModelRoute): string {
 export async function withModelRateLimit<T>(route: ModelRoute, fn: () => Promise<T>): Promise<T> {
   const key = modelRouteKey(route)
   const state = stateFor(key)
+  const rule = matchingModelRateLimit(route.model, route.rateLimits)
   const run = async () => {
     assertReady(route, state)
-    await waitForConfiguredSlot(route, state)
+    if (rule) await waitForConfiguredSlot(rule, state)
     assertReady(route, state)
     try {
       return await fn()
@@ -51,6 +52,7 @@ export async function withModelRateLimit<T>(route: ModelRoute, fn: () => Promise
       throw e
     }
   }
+  if (!rule) return run()
   const pending = state.tail.then(run, run)
   state.tail = pending.catch(() => undefined)
   return pending
@@ -79,9 +81,7 @@ export function matchingModelRateLimit(
   )) ?? null
 }
 
-async function waitForConfiguredSlot(route: ModelRoute, state: RouteState): Promise<void> {
-  const rule = matchingModelRateLimit(route.model, route.rateLimits)
-  if (!rule) return
+async function waitForConfiguredSlot(rule: ModelRateLimitRule, state: RouteState): Promise<void> {
   const remainingMs = state.nextRequestAt - Date.now()
   if (remainingMs > 0) await sleep(remainingMs)
   state.nextRequestAt = Date.now() + intervalMs(rule)
