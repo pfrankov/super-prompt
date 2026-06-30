@@ -2,6 +2,36 @@ import { db } from './db'
 import type { Dataset, DatasetItem } from '../types'
 import { newId } from '../util/id'
 
+type DatasetItemInput = Omit<DatasetItem, 'id' | 'datasetId'>
+
+function plainMeta(meta: DatasetItemInput['meta']): DatasetItemInput['meta'] {
+  if (!meta) return undefined
+  const out: Record<string, string> = {}
+  for (const [key, value] of Object.entries(meta)) {
+    if (value == null) continue
+    out[String(key)] = String(value)
+  }
+  return Object.keys(out).length ? out : undefined
+}
+
+export function toPlainDatasetItemInput(item: DatasetItemInput): DatasetItemInput {
+  const expectedOutput = item.expectedOutput == null ? undefined : String(item.expectedOutput)
+  return {
+    input: String(item.input),
+    expectedOutput,
+    meta: plainMeta(item.meta),
+  }
+}
+
+export function toPlainDatasetItem(item: DatasetItem): DatasetItem {
+  const input = toPlainDatasetItemInput(item)
+  return {
+    id: String(item.id),
+    datasetId: String(item.datasetId),
+    ...input,
+  }
+}
+
 export async function createDataset(taskId: string, name = 'Default'): Promise<Dataset> {
   const d = await db()
   const ds: Dataset = {
@@ -32,7 +62,7 @@ export async function addItems(datasetId: string, items: Omit<DatasetItem, 'id' 
   const itStore = tx.objectStore('datasets_items')
   const ds = await dsStore.get(datasetId)
   if (!ds) throw new Error('dataset not found')
-  const out: DatasetItem[] = items.map((it) => ({
+  const out: DatasetItem[] = items.map(toPlainDatasetItemInput).map((it) => ({
     id: newId(),
     datasetId,
     input: it.input,
@@ -47,7 +77,7 @@ export async function addItems(datasetId: string, items: Omit<DatasetItem, 'id' 
 
 export async function updateItem(item: DatasetItem): Promise<void> {
   const d = await db()
-  await d.put('datasets_items', item)
+  await d.put('datasets_items', toPlainDatasetItem(item))
 }
 
 export async function deleteItem(itemId: string): Promise<void> {
