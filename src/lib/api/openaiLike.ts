@@ -1,4 +1,5 @@
 import { ApiError } from './errors'
+import { withModelRateLimit } from './modelRateLimit'
 import { isMockProviderUrl, mockChatCompletion } from './mockOpenai'
 
 export interface ChatMessage {
@@ -31,7 +32,10 @@ export async function chatCompletion(req: ChatRequest): Promise<ChatResponse> {
   if (isMockProviderUrl(req.baseUrl)) {
     return mockChatCompletion(req)
   }
+  return withModelRateLimit(req, () => chatCompletionNetwork(req))
+}
 
+async function chatCompletionNetwork(req: ChatRequest): Promise<ChatResponse> {
   const url = req.baseUrl.replace(/\/$/, '') + '/chat/completions'
 
   const headers: Record<string, string> = { 'Content-Type': 'application/json' }
@@ -82,11 +86,14 @@ export async function chatCompletion(req: ChatRequest): Promise<ChatResponse> {
   }
 
   if (!resp.ok) {
+    const headers = Object.fromEntries(resp.headers.entries())
+    const errorInfo = extractErrorInfo(json)
+    const rateLimit = buildRateLimitInfo(resp.status, req, errorInfo, headers)
     throw new ApiError({
       status: resp.status,
-      message: extractErrorMessage(json) ?? `HTTP ${resp.status}`,
-      body: { json, headers: Object.fromEntries(resp.headers.entries()) },
-      retriable: resp.status === 429 || resp.status >= 500,
+      message: rateLimit?.message ?? errorInfo.message ?? `HTTP ${resp.status}`,
+      body: { json, headers, rateLimit },
+      retriable: rateLimit ? false : resp.status === 429 || resp.status >= 500,
     })
   }
 
@@ -107,14 +114,78 @@ export async function chatCompletion(req: ChatRequest): Promise<ChatResponse> {
   }
 }
 
-function extractErrorMessage(json: unknown): string | null {
+interface ErrorInfo {
+  message: string | null
+  raw: string | null
+  providerName: string | null
+  isByok: boolean | null
+}
+
+function extractErrorInfo(json: unknown): ErrorInfo {
   if (json && typeof json === 'object') {
-    const e = (json as { error?: { message?: string } }).error
-    if (e?.message) return e.message
-    const m = (json as { message?: string }).message
-    if (m) return m
+    const e = (json as {
+      error?: {
+        message?: string
+        metadata?: {
+          raw?: string
+          provider_name?: string
+          is_byok?: boolean
+        }
+      }
+    }).error
+    const raw = e?.metadata?.raw ?? null
+    const message = raw || e?.message || (json as { message?: string }).message || null
+    return {
+      message,
+      raw,
+      providerName: e?.metadata?.provider_name ?? null,
+      isByok: typeof e?.metadata?.is_byok === 'boolean' ? e.metadata.is_byok : null,
+    }
   }
-  return null
+  return { message: null, raw: null, providerName: null, isByok: null }
+}
+
+function buildRateLimitInfo(
+  status: number,
+  req: ChatRequest,
+  info: ErrorInfo,
+  headers: Record<string, string>
+): {
+  cooldownMs: number
+  message: string
+  model: string
+  providerName: string | null
+  raw: string | null
+  isByok: boolean | null
+} | null {
+  if (status !== 429) return null
+  const raw = info.raw ?? info.message ?? ''
+  const openRouterUpstream = /openrouter\.ai/i.test(req.baseUrl)
+    && /(temporarily rate-limited upstream|add your own key|provider returned error)/i.test(raw)
+  if (!openRouterUpstream) return null
+
+  const cooldownMs = retryAfterMs(headers) || 60_000
+  const provider = info.providerName ? ` via ${info.providerName}` : ''
+  const ownKey = info.isByok === false ? ', add your own provider key,' : ''
+  const message = `Rate limited: ${req.model}${provider}. Retry in about ${Math.ceil(cooldownMs / 1000)}s${ownKey} or switch this role to another model.`
+  return {
+    cooldownMs,
+    message,
+    model: req.model,
+    providerName: info.providerName,
+    raw: info.raw,
+    isByok: info.isByok,
+  }
+}
+
+function retryAfterMs(headers: Record<string, string>): number {
+  const retryAfter = headers['retry-after']
+  if (!retryAfter) return 0
+  const seconds = Number(retryAfter)
+  if (Number.isFinite(seconds)) return Math.max(0, Math.min(60_000, seconds * 1000))
+  const at = Date.parse(retryAfter)
+  if (Number.isFinite(at)) return Math.max(0, Math.min(60_000, at - Date.now()))
+  return 0
 }
 
 /** Convenience: call with retry. */

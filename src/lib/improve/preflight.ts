@@ -46,9 +46,9 @@ export function preflightReady(steps: PreflightStep[]): boolean {
 }
 
 export function nextPreflightAction(steps: PreflightStep[]): string {
-  return steps.find((step) => step.status === 'fail')?.action
-    ?? steps.find((step) => step.status === 'warn')?.action
-    ?? ''
+  const failed = steps.find((step) => step.status === 'fail')
+  if (failed) return /rate[- ]limited/i.test(failed.message) ? failed.message : failed.action
+  return steps.find((step) => step.status === 'warn')?.action ?? ''
 }
 
 function firstItem(items: DatasetItem[]): DatasetItem {

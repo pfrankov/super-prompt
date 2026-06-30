@@ -21,6 +21,19 @@ describe('preflight status mapping', () => {
     expect(nextPreflightAction(steps)).toBe('Choose another target.')
   })
 
+  it('surfaces rate-limit details as the next action', () => {
+    const steps: PreflightStep[] = [
+      { key: 'provider', status: 'ok', message: 'ok', action: '' },
+      {
+        key: 'target',
+        status: 'fail',
+        message: 'Rate limited: google/gemma via Google AI Studio. Retry in about 60s or switch this role to another model.',
+        action: 'Choose another target.',
+      },
+    ]
+    expect(nextPreflightAction(steps)).toContain('Google AI Studio')
+  })
+
   it('does not request a provider model list', async () => {
     const fetchMock = vi.fn(async (url: string, init?: RequestInit) => {
       expect(url).not.toContain('/models')
