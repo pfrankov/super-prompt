@@ -1,4 +1,6 @@
 <script lang="ts">
+  import Tooltip from './Tooltip.svelte'
+
   let {
     value = $bindable(0),
     label,
@@ -6,7 +8,7 @@
     max = Infinity,
     step = 1,
     hint = '',
-    hintMode = 'visible',
+    tooltip = '',
     error = '',
     disabled = false,
     id = '',
@@ -21,7 +23,7 @@
     max?: number
     step?: number
     hint?: string
-    hintMode?: 'visible' | 'hover'
+    tooltip?: string
     error?: string
     disabled?: boolean
     id?: string
@@ -37,10 +39,15 @@
   const effectiveError = $derived(error || internalError)
 </script>
 
-<label class="field" class:hover-hint={hintMode === 'hover'} for={fieldId}>
+<label class="field" for={fieldId}>
   {#if label}
     <span class="label-row">
       <span class="label">{label}</span>
+      {#if tooltip}
+        <Tooltip text={tooltip} placement="top">
+          <button type="button" class="info" aria-label={`${label} info`}>?</button>
+        </Tooltip>
+      {/if}
     </span>
   {/if}
   <input
@@ -81,6 +88,29 @@
     min-width: 0;
   }
   .label { font-size: var(--fs-sm); font-weight: 500; color: var(--ink-2); }
+  .info {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 16px;
+    height: 16px;
+    border: 1px solid var(--border-2);
+    border-radius: var(--r-pill);
+    color: var(--ink-3);
+    font-size: 10px;
+    line-height: 1;
+    cursor: help;
+    transition:
+      color var(--dur-fast) var(--ease),
+      border-color var(--dur-fast) var(--ease),
+      background-color var(--dur-fast) var(--ease);
+  }
+  .info:hover,
+  .info:focus-visible {
+    color: var(--ink-1);
+    border-color: rgba(238, 183, 124, 0.45);
+    background: rgba(238, 183, 124, 0.08);
+  }
   input {
     appearance: none;
     background: color-mix(in srgb, var(--bg-2) 78%, black);
@@ -111,22 +141,6 @@
     font-size: var(--fs-xs);
     color: var(--ink-3);
     line-height: 1.4;
-    transition:
-      opacity 160ms var(--ease-out),
-      max-height 180ms var(--ease-out),
-      transform 160ms var(--ease-out);
-  }
-  .hover-hint .hint {
-    max-height: 0;
-    opacity: 0;
-    overflow: hidden;
-    transform: translateY(-2px);
-  }
-  .hover-hint:hover .hint,
-  .hover-hint:focus-within .hint {
-    max-height: 120px;
-    opacity: 1;
-    transform: translateY(0);
   }
   .error { font-size: var(--fs-xs); color: var(--err); }
 </style>

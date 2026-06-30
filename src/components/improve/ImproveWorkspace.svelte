@@ -19,6 +19,7 @@
   import TextField from '../ui/TextField.svelte'
   import NumberField from '../ui/NumberField.svelte'
   import Tag from '../ui/Tag.svelte'
+  import Tooltip from '../ui/Tooltip.svelte'
   import ProgressChart from '../chart/ProgressChart.svelte'
   import RunStats from '../run/RunStats.svelte'
   import CandidateTimeline from '../run/CandidateTimeline.svelte'
@@ -831,26 +832,29 @@
           <div>
             <dt>
               <span>{$_('run.iterationsCap')}</span>
-              <button type="button" class="hint-dot" aria-label={$_('run.hints.iterationsCap')}>?</button>
+              <Tooltip text={$_('run.hints.iterationsCap')} placement="bottom">
+                <button type="button" class="hint-dot" aria-label={$_('run.hints.iterationsCap')}>?</button>
+              </Tooltip>
             </dt>
             <dd>{config.iterationsCap}</dd>
-            <p class="row-hint">{$_('run.hints.iterationsCap')}</p>
           </div>
           <div>
             <dt>
               <span>{$_('run.sampleSize')}</span>
-              <button type="button" class="hint-dot" aria-label={$_('run.hints.sampleSize')}>?</button>
+              <Tooltip text={$_('run.hints.sampleSize')} placement="bottom">
+                <button type="button" class="hint-dot" aria-label={$_('run.hints.sampleSize')}>?</button>
+              </Tooltip>
             </dt>
             <dd>{config.sampleSizePerIter}</dd>
-            <p class="row-hint">{$_('run.hints.sampleSize')}</p>
           </div>
           <div>
             <dt>
               <span>{$_('run.concurrency')}</span>
-              <button type="button" class="hint-dot" aria-label={$_('run.hints.concurrency')}>?</button>
+              <Tooltip text={$_('run.hints.concurrency')} placement="bottom">
+                <button type="button" class="hint-dot" aria-label={$_('run.hints.concurrency')}>?</button>
+              </Tooltip>
             </dt>
             <dd>{config.concurrency}</dd>
-            <p class="row-hint">{$_('run.hints.concurrency')}</p>
           </div>
         </dl>
         {#if configEdited}
@@ -863,19 +867,19 @@
       <details>
         <summary>{$_('run.advanced')}</summary>
         <div class="fields">
-          <NumberField bind:value={config.iterationsCap} label={$_('run.iterationsCap')} hint={$_('run.hints.iterationsCap')} hintMode="hover" min={1} max={500} oninput={markConfigEdited} />
-          <NumberField bind:value={config.concurrency} label={$_('run.concurrency')} hint={$_('run.hints.concurrency')} hintMode="hover" min={1} max={16} oninput={markConfigEdited} />
-          <NumberField bind:value={config.sampleSizePerIter} label={$_('run.sampleSize')} hint={$_('run.hints.sampleSize')} hintMode="hover" min={1} max={items.length || 50} oninput={markConfigEdited} />
-          <NumberField bind:value={config.earlyStopPlateau} label={$_('run.earlyStop')} hint={$_('run.hints.earlyStop')} hintMode="hover" min={0} max={50} oninput={markConfigEdited} />
-          <NumberField bind:value={config.tokenBudget} label={$_('run.tokenBudget')} hint={$_('run.hints.tokenBudget')} hintMode="hover" min={0} step={1000} oninput={markConfigEdited} />
+          <NumberField bind:value={config.iterationsCap} label={$_('run.iterationsCap')} tooltip={$_('run.hints.iterationsCap')} min={1} max={500} oninput={markConfigEdited} />
+          <NumberField bind:value={config.concurrency} label={$_('run.concurrency')} tooltip={$_('run.hints.concurrency')} min={1} max={16} oninput={markConfigEdited} />
+          <NumberField bind:value={config.sampleSizePerIter} label={$_('run.sampleSize')} tooltip={$_('run.hints.sampleSize')} min={1} max={items.length || 50} oninput={markConfigEdited} />
+          <NumberField bind:value={config.earlyStopPlateau} label={$_('run.earlyStop')} tooltip={$_('run.hints.earlyStop')} min={0} max={50} oninput={markConfigEdited} />
+          <NumberField bind:value={config.tokenBudget} label={$_('run.tokenBudget')} tooltip={$_('run.hints.tokenBudget')} min={0} step={1000} oninput={markConfigEdited} />
         </div>
       </details>
       <details>
         <summary>{$_('run.temperatures')}</summary>
         <div class="fields">
-          <NumberField bind:value={config.judgeTemperature} label={$_('run.judgeTemp')} hint={$_('run.hints.judgeTemp')} hintMode="hover" min={0} max={2} step={0.1} onchange={() => (tempsEdited = true)} />
-          <NumberField bind:value={config.targetTemperature} label={$_('run.targetTemp')} hint={$_('run.hints.targetTemp')} hintMode="hover" min={0} max={2} step={0.1} onchange={() => (tempsEdited = true)} />
-          <NumberField bind:value={config.mutatorTemperature} label={$_('run.mutatorTemp')} hint={$_('run.hints.mutatorTemp')} hintMode="hover" min={0} max={2} step={0.1} onchange={() => (tempsEdited = true)} />
+          <NumberField bind:value={config.judgeTemperature} label={$_('run.judgeTemp')} tooltip={$_('run.hints.judgeTemp')} min={0} max={2} step={0.1} onchange={() => (tempsEdited = true)} />
+          <NumberField bind:value={config.targetTemperature} label={$_('run.targetTemp')} tooltip={$_('run.hints.targetTemp')} min={0} max={2} step={0.1} onchange={() => (tempsEdited = true)} />
+          <NumberField bind:value={config.mutatorTemperature} label={$_('run.mutatorTemp')} tooltip={$_('run.hints.mutatorTemp')} min={0} max={2} step={0.1} onchange={() => (tempsEdited = true)} />
         </div>
       </details>
 
@@ -1348,29 +1352,6 @@
   .plan-list dd {
     color: var(--ink-1);
     font-variant-numeric: tabular-nums;
-  }
-  .row-hint {
-    grid-column: 1 / -1;
-    max-height: 0;
-    margin: calc(-1 * var(--s-2)) 0 0;
-    overflow: hidden;
-    color: var(--ink-3);
-    font-size: var(--fs-xs);
-    line-height: 1.4;
-    opacity: 0;
-    transform: translateY(-2px);
-    transition:
-      opacity 160ms var(--ease-out),
-      max-height 180ms var(--ease-out),
-      margin-top 180ms var(--ease-out),
-      transform 160ms var(--ease-out);
-  }
-  .plan-list div:hover .row-hint,
-  .plan-list div:focus-within .row-hint {
-    max-height: 120px;
-    margin-top: calc(-1 * var(--s-1));
-    opacity: 1;
-    transform: translateY(0);
   }
   .hint-dot {
     display: inline-flex;
