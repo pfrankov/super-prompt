@@ -208,7 +208,8 @@
       "starting": "Starting GEPA…",
       "providerNeeded": "Add an API key or use a local provider before examples can be generated.",
       "modelNeeded": "Choose the target model first.",
-      "manualExamplesPreserved": "Manual or imported examples are preserved. Delete them first if you want generated examples."
+      "manualExamplesPreserved": "Manual or imported examples are preserved. Delete them first if you want generated examples.",
+      "stoppedAfterReload": "Previous run was stopped because the page was reloaded."
     },
     "examples": {
       "title": "Examples",

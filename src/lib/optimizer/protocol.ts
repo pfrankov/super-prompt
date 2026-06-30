@@ -4,9 +4,9 @@ export type CompareResult = Omit<PairwiseResult, 'id' | 'iterationId'>[]
 
 export type MainToWorker =
   | { type: 'START'; payload: { runId: string } }
-  | { type: 'PAUSE' }
-  | { type: 'RESUME' }
-  | { type: 'STOP' }
+  | { type: 'PAUSE'; payload?: { runId?: string } }
+  | { type: 'RESUME'; payload?: { runId?: string } }
+  | { type: 'STOP'; payload?: { runId?: string } }
   | { type: 'COMPARE_AB'; payload: { taskId: string; promptA: string; promptB: string; itemIds: string[]; config: RunConfig } }
   | { type: 'GET_STATE' }
   | { type: 'UPDATE_SETTINGS'; payload: { provider: ProviderConfig; arbitrator?: ArbitratorConfig; config: RunConfig } }

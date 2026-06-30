@@ -2,7 +2,7 @@ import type {
   MainToWorker,
   WorkerToMain,
 } from '../lib/optimizer/protocol'
-import { getRun, getCandidates } from '../lib/db/runs'
+import { getRun, getCandidates, getIterations, patchRun } from '../lib/db/runs'
 import { getTask } from '../lib/db/tasks'
 import { getDataset, getAllItems } from '../lib/db/datasets'
 import { getSettings } from '../lib/db/settings'
@@ -15,6 +15,38 @@ let initialCandidates: PromptCandidate[] = []
 
 function send(msg: WorkerToMain) {
   ;(self as unknown as Worker).postMessage(msg)
+}
+
+async function stopPersistedRun(runId?: string) {
+  if (!runId) return
+  const existing = await getRun(runId)
+  if (!existing || ['stopped', 'completed', 'failed'].includes(existing.status)) return
+
+  const finishedAt = Date.now()
+  await patchRun(runId, { status: 'stopped', finishedAt })
+  const [run, candidates, history] = await Promise.all([
+    getRun(runId),
+    getCandidates(runId),
+    getIterations(runId),
+  ])
+  if (!run) return
+
+  send({
+    type: 'STATE',
+    state: {
+      run,
+      candidates,
+      history,
+      log: [{ ts: finishedAt, level: 'info', msg: 'stopped by user' }],
+      stage: {
+        key: 'stopped',
+        iteration: run.iterationCount,
+        totalIterations: run.config.iterationsCap,
+        updatedAt: finishedAt,
+      },
+    },
+  })
+  send({ type: 'DONE', finalCandidateId: run.bestCandidateId })
 }
 
 async function loadCompareCtx(taskId: string, config: RunConfig): Promise<Ctx> {
@@ -92,7 +124,8 @@ self.onmessage = async (e: MessageEvent<MainToWorker>) => {
         await runner?.resume()
         break
       case 'STOP':
-        await runner?.stop()
+        if (runner) await runner.stop()
+        else await stopPersistedRun(msg.payload?.runId)
         break
       case 'COMPARE_AB': {
         try {

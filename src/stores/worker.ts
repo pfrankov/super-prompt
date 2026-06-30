@@ -129,17 +129,26 @@ export function start(runId: string): void {
   ensureWorker().postMessage({ type: 'START', payload: { runId } } satisfies MainToWorker)
 }
 
-export function pause(): void {
-  ensureWorker().postMessage({ type: 'PAUSE' } satisfies MainToWorker)
+export function pause(runId?: string): void {
+  ensureWorker().postMessage({
+    type: 'PAUSE',
+    payload: runId ? { runId } : undefined,
+  } satisfies MainToWorker)
 }
 
-export function resume(): void {
-  ensureWorker().postMessage({ type: 'RESUME' } satisfies MainToWorker)
+export function resume(runId?: string): void {
+  ensureWorker().postMessage({
+    type: 'RESUME',
+    payload: runId ? { runId } : undefined,
+  } satisfies MainToWorker)
 }
 
-export function stop(): void {
+export function stop(runId?: string): void {
   runActive = false
-  ensureWorker().postMessage({ type: 'STOP' } satisfies MainToWorker)
+  ensureWorker().postMessage({
+    type: 'STOP',
+    payload: runId ? { runId } : undefined,
+  } satisfies MainToWorker)
 }
 
 export function compareAB(

@@ -4,12 +4,13 @@
   import { onDestroy, onMount } from 'svelte'
   import type { Dataset, DatasetItem, ProviderConfig, RunConfig, RunStage, RunStageKey, Task } from '../../lib/types'
   import { addItems, clearDataset, createDataset, getAllItems, getDataset } from '../../lib/db/datasets'
-  import { createRun, getCandidates, getIterations, getRun, listRuns } from '../../lib/db/runs'
+  import { createRun, getCandidates, getIterations, getRun, listRuns, patchRun } from '../../lib/db/runs'
   import { saveTask } from '../../lib/db/tasks'
   import { saveSettings, settings } from '../../stores/settings'
   import { optimizationState, pause, reset, resume, start, stop } from '../../stores/worker'
   import { t } from '../../stores/toast'
   import { analyzePrompt, canAutoReplaceExamples, examplesAreManual, generatedItemsFromAnalysis, promptFingerprint } from '../../lib/improve/intake'
+  import { shouldStopReloadedRun, stopReloadedRun } from '../../lib/improve/run-recovery'
   import { isRunnableProvider, providerKindFromBaseUrl } from '../../lib/improve/model-routing'
   import { nextPreflightAction, runPreflight, type PreflightResult } from '../../lib/improve/preflight'
   import { judgeRoute } from '../../lib/optimizer/judge'
@@ -113,6 +114,7 @@
   const isRunning = $derived(run?.status === 'running')
   const isPaused = $derived(run?.status === 'paused')
   const isStopped = $derived(run?.status === 'stopped' || run?.status === 'completed' || run?.status === 'failed')
+  const canStartRun = $derived(!run || run.status === 'idle' || isStopped)
   const bestCandidate = $derived(
     run?.bestCandidateId
       ? $optimizationState.candidates.find((c) => c.id === run.bestCandidateId) ?? null
@@ -159,8 +161,17 @@
   async function hydrateLatestRun() {
     const runs = await listRuns(task.id)
     if (!runs.length) return
-    const last = await getRun(runs[0].id)
+    let last = await getRun(runs[0].id)
     if (!last) return
+    if (shouldStopReloadedRun(last)) {
+      const recovered = stopReloadedRun(last, Date.now(), $_('improve.status.stoppedAfterReload'))
+      await patchRun(last.id, {
+        status: recovered.status,
+        finishedAt: recovered.finishedAt,
+        errorMessage: recovered.errorMessage,
+      })
+      last = recovered
+    }
     const [candidates, history] = await Promise.all([
       getCandidates(last.id),
       getIterations(last.id),
@@ -640,18 +651,18 @@
     </div>
 
     <div class="actions-row">
-      {#if !run || isStopped}
+      {#if canStartRun}
         <div class="primary-action">
           <Button full size="lg" onclick={improve} loading={primaryBusy} disabled={!task.initialPrompt.trim()}>
             {$_('improve.primary')}
           </Button>
         </div>
       {:else if isRunning}
-        <Button variant="secondary" onclick={pause}>{$_('run.pause')}</Button>
-        <Button variant="danger" onclick={stop}>{$_('run.stop')}</Button>
+        <Button variant="secondary" onclick={() => pause(run?.id)}>{$_('run.pause')}</Button>
+        <Button variant="danger" onclick={() => stop(run?.id)}>{$_('run.stop')}</Button>
       {:else if isPaused}
-        <Button variant="primary" onclick={resume}>{$_('run.resume')}</Button>
-        <Button variant="danger" onclick={stop}>{$_('run.stop')}</Button>
+        <Button variant="primary" onclick={() => resume(run?.id)}>{$_('run.resume')}</Button>
+        <Button variant="danger" onclick={() => stop(run?.id)}>{$_('run.stop')}</Button>
       {/if}
       <Button variant="ghost" onclick={() => void runIntake()} disabled={!task.initialPrompt.trim() || primaryBusy}>
         {$_('improve.regenerateExamples')}
