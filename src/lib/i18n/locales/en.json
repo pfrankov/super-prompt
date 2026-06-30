@@ -212,8 +212,10 @@
     },
     "examples": {
       "title": "Examples",
-      "body": "Auto-generated from the prompt. Imported or edited examples stay untouched.",
-      "empty": "They will appear here after you paste a prompt."
+      "count": "{count} examples",
+      "readyBody": "Required for scoring prompt candidates. Open the full dataset when you need to review, edit, or clear it.",
+      "empty": "Add or generate at least 2 examples before running optimization.",
+      "open": "Open examples"
     },
     "preflight": {
       "title": "Call test",

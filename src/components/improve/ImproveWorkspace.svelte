@@ -800,23 +800,16 @@
           <span>{$_('improve.examples.title')}</span>
           <Tag tone={items.length >= 2 ? 'ok' : canGenerateExamples ? 'info' : 'warn'}>
             {items.length >= 2
-              ? $_('improve.setup.ready')
+              ? $_('improve.examples.count', { values: { count: items.length } })
               : $_('improve.setup.needsExamples', { values: { count: Math.max(0, 2 - items.length) } })}
           </Tag>
         </div>
-        <p class="panel-copy">{$_('improve.examples.body')}</p>
-        {#if items.length}
-          <ol class="examples">
-            {#each items.slice(0, 4) as item (item.id)}
-              <li>
-                <span>{item.input}</span>
-                {#if item.meta?.difficulty}<Tag tone="neutral">{item.meta.difficulty}</Tag>{/if}
-              </li>
-            {/each}
-          </ol>
-        {:else}
-          <p class="empty">{$_('improve.examples.empty')}</p>
-        {/if}
+        <p class="panel-copy">
+          {items.length >= 2 ? $_('improve.examples.readyBody') : $_('improve.examples.empty')}
+        </p>
+        <Button size="sm" variant="ghost" href={`#/task/${task.id}/dataset`}>
+          {$_('improve.examples.open')}
+        </Button>
       </div>
 
       <details>
@@ -1257,39 +1250,6 @@
     color: var(--ink-1);
     font-size: var(--fs-sm);
     font-weight: 600;
-  }
-  .examples {
-    display: flex;
-    flex-direction: column;
-    gap: var(--s-2);
-    padding: 0;
-    margin: 0;
-    list-style: none;
-  }
-  .examples li {
-    display: flex;
-    justify-content: space-between;
-    gap: var(--s-2);
-    padding: 10px var(--s-3);
-    background: color-mix(in srgb, var(--bg-2) 72%, black);
-    border: 1px solid var(--border-1);
-    border-radius: var(--r-sm);
-    color: var(--ink-2);
-    font-size: var(--fs-sm);
-  }
-  .examples li span:first-child {
-    min-width: 0;
-    overflow: hidden;
-    text-overflow: ellipsis;
-    display: -webkit-box;
-    -webkit-line-clamp: 2;
-    line-clamp: 2;
-    -webkit-box-orient: vertical;
-  }
-  .empty {
-    margin: 0;
-    color: var(--ink-3);
-    font-size: var(--fs-sm);
   }
   details {
     border-top: 1px solid var(--border-1);
