@@ -26,10 +26,17 @@ interface RouteState {
   nextRequestAt: number
 }
 
+export const DEFAULT_GLOBAL_REQUESTS_PER_SECOND = 2
+export const DEFAULT_GLOBAL_INTERVAL_MS = Math.ceil(1000 / DEFAULT_GLOBAL_REQUESTS_PER_SECOND)
+
 const routeStates = new Map<string, RouteState>()
+let globalTail: Promise<unknown> = Promise.resolve()
+let globalNextRequestAt = 0
 
 export function clearModelRateLimits(): void {
   routeStates.clear()
+  globalTail = Promise.resolve()
+  globalNextRequestAt = 0
 }
 
 export function modelRouteKey(route: ModelRoute): string {
@@ -45,6 +52,8 @@ export async function withModelRateLimit<T>(route: ModelRoute, fn: () => Promise
     assertReady(route, state)
     if (rule) await waitForConfiguredSlot(rule, state)
     assertReady(route, state)
+    await waitForGlobalSlot()
+    assertReady(route, state)
     try {
       return await fn()
     } catch (e) {
@@ -56,6 +65,18 @@ export async function withModelRateLimit<T>(route: ModelRoute, fn: () => Promise
   const pending = state.tail.then(run, run)
   state.tail = pending.catch(() => undefined)
   return pending
+}
+
+function waitForGlobalSlot(): Promise<void> {
+  const pending = globalTail.then(waitForDefaultInterval, waitForDefaultInterval)
+  globalTail = pending.catch(() => undefined)
+  return pending
+}
+
+async function waitForDefaultInterval(): Promise<void> {
+  const remainingMs = globalNextRequestAt - Date.now()
+  if (remainingMs > 0) await sleep(remainingMs)
+  globalNextRequestAt = Date.now() + DEFAULT_GLOBAL_INTERVAL_MS
 }
 
 function stateFor(key: string): RouteState {

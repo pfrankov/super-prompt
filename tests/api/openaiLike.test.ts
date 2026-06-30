@@ -108,42 +108,55 @@ describe('chatCompletion', () => {
     }
   })
 
-  it('does not throttle a different model with the same provider key', async () => {
+  it('throttles a different model with the default global limit', async () => {
     vi.useFakeTimers()
     try {
       ;(global.fetch as any).mockResolvedValue(okResponse('ok'))
       const rateLimits = [{ id: 'r1', enabled: true, model: 'limited-model', requestsPerMinute: 60 }]
 
       await chatCompletion({ baseUrl: 'http://l', apiKey: 'k', model: 'limited-model', messages: [], rateLimits })
-      const other = await chatCompletion({ baseUrl: 'http://l', apiKey: 'k', model: 'other-model', messages: [], rateLimits })
+      const other = chatCompletion({ baseUrl: 'http://l', apiKey: 'k', model: 'other-model', messages: [], rateLimits })
+      await vi.advanceTimersByTimeAsync(499)
+      expect(global.fetch).toHaveBeenCalledTimes(1)
 
-      expect(other.text).toBe('ok')
+      await vi.advanceTimersByTimeAsync(1)
+      await expect(other).resolves.toMatchObject({ text: 'ok' })
       expect(global.fetch).toHaveBeenCalledTimes(2)
     } finally {
       vi.useRealTimers()
     }
   })
 
-  it('does not serialize same-model requests when no RPM rule is configured', async () => {
-    let releaseFetch!: () => void
-    const blocked = new Promise<Response>((resolve) => {
-      releaseFetch = () => resolve(okResponse('ok'))
-    })
-    ;(global.fetch as any).mockReturnValue(blocked)
+  it('spaces requests with the default global limit when no RPM rule is configured', async () => {
+    vi.useFakeTimers()
+    try {
+      let releaseFetch!: () => void
+      const blocked = new Promise<Response>((resolve) => {
+        releaseFetch = () => resolve(okResponse('ok'))
+      })
+      ;(global.fetch as any).mockReturnValue(blocked)
 
-    const req = {
-      baseUrl: 'http://l',
-      apiKey: 'k',
-      model: 'unlimited-model',
-      messages: [],
+      const req = {
+        baseUrl: 'http://l',
+        apiKey: 'k',
+        model: 'unlimited-model',
+        messages: [],
+      }
+      const first = chatCompletion(req)
+      const second = chatCompletion(req)
+
+      await vi.advanceTimersByTimeAsync(0)
+      expect(global.fetch).toHaveBeenCalledTimes(1)
+      await vi.advanceTimersByTimeAsync(499)
+      expect(global.fetch).toHaveBeenCalledTimes(1)
+
+      await vi.advanceTimersByTimeAsync(1)
+      expect(global.fetch).toHaveBeenCalledTimes(2)
+      releaseFetch()
+      await expect(Promise.all([first, second])).resolves.toHaveLength(2)
+    } finally {
+      vi.useRealTimers()
     }
-    const first = chatCompletion(req)
-    const second = chatCompletion(req)
-
-    await Promise.resolve()
-    expect(global.fetch).toHaveBeenCalledTimes(2)
-    releaseFetch()
-    await expect(Promise.all([first, second])).resolves.toHaveLength(2)
   })
 })
 
@@ -209,11 +222,15 @@ describe('chatCompletionWithRetry', () => {
       await expect(sameModel).resolves.toMatchObject({ text: 'same model ok' })
       expect(global.fetch).toHaveBeenCalledTimes(2)
 
-      const other = await chatCompletionWithRetry({
+      const other = chatCompletionWithRetry({
         ...rateLimitedReq,
         model: 'openai/gpt-4o-mini',
       }, 0)
-      expect(other.text).toBe('other model ok')
+      await vi.advanceTimersByTimeAsync(499)
+      expect(global.fetch).toHaveBeenCalledTimes(2)
+
+      await vi.advanceTimersByTimeAsync(1)
+      await expect(other).resolves.toMatchObject({ text: 'other model ok' })
       expect(global.fetch).toHaveBeenCalledTimes(3)
     } finally {
       vi.useRealTimers()
