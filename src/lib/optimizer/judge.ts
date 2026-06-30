@@ -82,6 +82,7 @@ export async function runJudge(args: JudgeArgs, onLog?: (m: string, level: 'info
     temperature: args.temperature,
     maxTokens: 800,
     timeoutMs: args.provider.requestTimeoutMs,
+    rateLimits: args.provider.modelRateLimits,
   }, args.provider.maxRetries)
 
   const parsed = tryParseJson<Record<string, unknown>>(resp.text)

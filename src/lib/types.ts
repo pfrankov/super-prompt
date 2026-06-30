@@ -17,6 +17,14 @@ export interface ProviderConfig {
   judgeModel: string
   requestTimeoutMs: number
   maxRetries: number
+  modelRateLimits?: ModelRateLimitRule[]
+}
+
+export interface ModelRateLimitRule {
+  id: string
+  enabled: boolean
+  model: string
+  requestsPerMinute: number
 }
 
 /**

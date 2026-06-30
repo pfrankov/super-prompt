@@ -60,6 +60,7 @@ async function runTarget(provider: ProviderConfig, systemPrompt: string, input: 
     ],
     temperature,
     timeoutMs: provider.requestTimeoutMs,
+    rateLimits: provider.modelRateLimits,
   }, provider.maxRetries)
   return { text: resp.text, tokensIn: resp.usage.promptTokens, tokensOut: resp.usage.completionTokens }
 }

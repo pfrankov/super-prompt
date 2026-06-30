@@ -17,7 +17,7 @@ export interface PromptAnalysis {
 }
 
 export interface AnalyzePromptArgs {
-  provider: Pick<ProviderConfig, 'baseUrl' | 'apiKey' | 'requestTimeoutMs'>
+  provider: Pick<ProviderConfig, 'baseUrl' | 'apiKey' | 'requestTimeoutMs' | 'modelRateLimits'>
   model: string
   prompt: string
   targetModel: string
@@ -123,6 +123,7 @@ export async function analyzePrompt(args: AnalyzePromptArgs): Promise<PromptAnal
     maxTokens: 3000,
     timeoutMs: args.provider.requestTimeoutMs,
     signal: args.signal,
+    rateLimits: args.provider.modelRateLimits,
   })
   const parsed = parsePromptAnalysis(response.text, count)
   if (!parsed) throw new Error('analysis_parse_failed')

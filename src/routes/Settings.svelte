@@ -11,6 +11,8 @@
   import { t } from '../stores/toast'
   import { listProviderModels, selectJudgeModel } from '../lib/improve/model-routing'
   import { MOCK_JUDGE_MODEL, MOCK_PROVIDER_URL, MOCK_TARGET_MODEL } from '../lib/api/mockOpenai'
+  import { newId } from '../lib/util/id'
+  import type { ModelRateLimitRule } from '../lib/types'
 
   let testing = $state(false)
   let testResult: 'ok' | 'fail' | null = $state(null)
@@ -68,6 +70,65 @@
       await saveSettings({ provider: $settings.provider, arbitrator: $settings.arbitrator })
       savedAt = Date.now()
     }, 500)
+  }
+
+  function rateLimits(): ModelRateLimitRule[] {
+    return $settings.provider.modelRateLimits ?? []
+  }
+
+  function setRateLimits(rules: ModelRateLimitRule[]) {
+    settings.set({
+      ...$settings,
+      provider: {
+        ...$settings.provider,
+        modelRateLimits: rules,
+      },
+    })
+    scheduleSave()
+  }
+
+  function updateRateLimit(id: string, patch: Partial<ModelRateLimitRule>) {
+    setRateLimits(rateLimits().map((rule) => rule.id === id ? { ...rule, ...patch } : rule))
+  }
+
+  function addRateLimit(model = '') {
+    const trimmedModel = model.trim()
+    setRateLimits([
+      ...rateLimits(),
+      {
+        id: newId(),
+        enabled: true,
+        model: trimmedModel,
+        requestsPerMinute: 30,
+      },
+    ])
+  }
+
+  function addCurrentModelLimits() {
+    const current = [
+      $settings.provider.targetModel,
+      $settings.provider.judgeModel,
+      $settings.arbitrator.enabled ? $settings.arbitrator.model : '',
+    ].map((model) => model.trim()).filter(Boolean)
+    const existing = new Set(rateLimits().map((rule) => rule.model.trim().toLowerCase()).filter(Boolean))
+    const next = [...rateLimits()]
+    for (const model of current) {
+      const key = model.toLowerCase()
+      if (existing.has(key)) continue
+      existing.add(key)
+      next.push({
+        id: newId(),
+        enabled: true,
+        model,
+        requestsPerMinute: 30,
+      })
+    }
+    if (next.length === rateLimits().length) addRateLimit()
+    else setRateLimits(next)
+  }
+
+  function removeRateLimit(id: string) {
+    setRateLimits(rateLimits().filter((rule) => rule.id !== id))
   }
 
   async function testConnection() {
@@ -280,6 +341,61 @@
         validate={(v) => v < 0 || v > 10 ? '0 to 10' : null}
         oninput={scheduleSave}
       />
+      <div class="rate-limit-panel">
+        <div class="rate-limit-head">
+          <div>
+            <h4>{$_('settings.modelRateLimits')}</h4>
+            <p>{$_('settings.modelRateLimitsBody')}</p>
+          </div>
+          <div class="rate-limit-buttons">
+            <Button size="sm" variant="secondary" onclick={addCurrentModelLimits}>
+              {$_('settings.modelRateLimitAddCurrent')}
+            </Button>
+            <Button size="sm" variant="ghost" onclick={() => addRateLimit()}>
+              {$_('settings.modelRateLimitAdd')}
+            </Button>
+          </div>
+        </div>
+
+        {#if !rateLimits().length}
+          <p class="rate-limit-empty">{$_('settings.modelRateLimitsEmpty')}</p>
+        {:else}
+          <div class="rate-limit-list">
+            {#each rateLimits() as rule (rule.id)}
+              <div class="rate-limit-row">
+                <label class="rate-limit-enabled">
+                  <input
+                    type="checkbox"
+                    checked={rule.enabled}
+                    onchange={(e) => updateRateLimit(rule.id, { enabled: (e.currentTarget as HTMLInputElement).checked })}
+                  />
+                  <span>{$_('settings.modelRateLimitEnabled')}</span>
+                </label>
+                <TextField
+                  value={rule.model}
+                  label={$_('settings.modelRateLimitModel')}
+                  hint="google/gemma-4-26b-a4b-it:free"
+                  validate={(v) => v.trim() ? null : 'Model is required'}
+                  oninput={(value) => updateRateLimit(rule.id, { model: value })}
+                />
+                <NumberField
+                  value={rule.requestsPerMinute}
+                  label={$_('settings.modelRateLimitRpm')}
+                  min={1}
+                  max={3600}
+                  validate={(v) => v < 1 || v > 3600 ? '1 to 3600' : null}
+                  oninput={(value) => updateRateLimit(rule.id, { requestsPerMinute: value })}
+                />
+                <div class="rate-limit-actions">
+                  <Button size="sm" variant="ghost" onclick={() => removeRateLimit(rule.id)}>
+                    {$_('settings.modelRateLimitRemove')}
+                  </Button>
+                </div>
+              </div>
+            {/each}
+          </div>
+        {/if}
+      </div>
     </div>
     <div class="row">
       {#if savedAt}
@@ -388,7 +504,7 @@
 
 <style>
   .grid { display: grid; grid-template-columns: 1fr; gap: var(--s-4); max-width: 720px; }
-  .card { padding: var(--s-5); display: flex; flex-direction: column; gap: var(--s-4); }
+  .card { padding: var(--s-5); display: flex; flex-direction: column; gap: var(--s-4); min-width: 0; }
   h3 { font-size: var(--fs-lg); }
   .form { display: flex; flex-direction: column; gap: var(--s-3); }
   .row { display: flex; gap: var(--s-2); align-items: center; flex-wrap: wrap; }
@@ -407,6 +523,69 @@
   .api-key { display: flex; flex-direction: column; gap: var(--s-2); }
   .api-actions { display: flex; gap: var(--s-3); }
   .model-actions { display: flex; justify-content: flex-end; margin-top: calc(var(--s-2) * -1); }
+  .rate-limit-panel {
+    display: flex;
+    flex-direction: column;
+    gap: var(--s-3);
+    padding: var(--s-3);
+    background: var(--bg-2);
+    border: 1px solid var(--border-1);
+    border-radius: var(--r-md);
+    min-width: 0;
+  }
+  .rate-limit-head {
+    display: flex;
+    align-items: flex-start;
+    justify-content: space-between;
+    gap: var(--s-3);
+    flex-wrap: wrap;
+  }
+  .rate-limit-head h4 {
+    margin: 0 0 var(--s-1);
+    font-size: var(--fs-sm);
+  }
+  .rate-limit-head p,
+  .rate-limit-empty {
+    margin: 0;
+    color: var(--ink-3);
+    font-size: var(--fs-sm);
+  }
+  .rate-limit-buttons {
+    display: flex;
+    gap: var(--s-2);
+    flex-wrap: wrap;
+    justify-content: flex-end;
+  }
+  .rate-limit-list {
+    display: flex;
+    flex-direction: column;
+    gap: var(--s-2);
+  }
+  .rate-limit-row {
+    display: grid;
+    grid-template-columns: minmax(96px, 0.6fr) minmax(180px, 1.6fr) minmax(112px, 0.7fr) auto;
+    align-items: end;
+    gap: var(--s-2);
+    min-width: 0;
+  }
+  .rate-limit-enabled {
+    display: flex;
+    align-items: center;
+    gap: var(--s-2);
+    min-height: 40px;
+    color: var(--ink-2);
+    font-size: var(--fs-sm);
+  }
+  .rate-limit-enabled input {
+    width: 16px;
+    height: 16px;
+    accent-color: var(--primary);
+  }
+  .rate-limit-actions {
+    display: flex;
+    align-items: flex-end;
+    min-height: 40px;
+  }
   .link { appearance: none; background: none; border: none; color: var(--secondary); font: inherit; font-size: var(--fs-sm); cursor: pointer; padding: 0; }
   .link:hover { text-decoration: underline; }
   .link.danger { color: var(--err); }
@@ -456,4 +635,10 @@
   .toggle input:checked + .toggle-track .toggle-thumb { transform: translateX(16px); }
   .toggle input:focus-visible + .toggle-track { box-shadow: 0 0 0 3px rgba(238, 183, 124, 0.24); }
   .toggle-label { user-select: none; }
+
+  @media (max-width: 680px) {
+    .rate-limit-buttons { justify-content: flex-start; width: 100%; }
+    .rate-limit-row { grid-template-columns: 1fr; align-items: stretch; }
+    .rate-limit-actions { justify-content: flex-start; }
+  }
 </style>

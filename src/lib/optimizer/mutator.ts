@@ -55,6 +55,7 @@ export async function runMutator(args: MutatorArgs): Promise<MutatorResult> {
     temperature: args.temperature,
     maxTokens: 1500,
     timeoutMs: args.provider.requestTimeoutMs,
+    rateLimits: args.provider.modelRateLimits,
   }, args.provider.maxRetries)
 
   const parsed = tryParseJson<{ newPrompt?: string; rationale?: string }>(resp.text)

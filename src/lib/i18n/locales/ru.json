@@ -407,7 +407,16 @@
     "forget": "Забыть",
     "advanced": "Дополнительно",
     "timeout": "Тайм-аут запроса (мс)",
-    "maxRetries": "Макс. повторов"
+    "maxRetries": "Макс. повторов",
+    "modelRateLimits": "Лимиты моделей",
+    "modelRateLimitsBody": "Ограничивает chat-запросы по точному slug модели. Работает для целевой модели, арбитра, мутатора, preflight, intake и генерации датасета.",
+    "modelRateLimitsEmpty": "Лимиты не заданы. Автоматические cooldown после upstream 429 всё равно работают.",
+    "modelRateLimitEnabled": "Включено",
+    "modelRateLimitModel": "Модель",
+    "modelRateLimitRpm": "Запросов/мин",
+    "modelRateLimitAdd": "Добавить правило",
+    "modelRateLimitAddCurrent": "Добавить текущие модели",
+    "modelRateLimitRemove": "Удалить"
   },
   "errors": {
     "network": "Ошибка сети",

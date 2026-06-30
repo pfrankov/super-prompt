@@ -1,9 +1,11 @@
 import { ApiError } from './errors'
+import type { ModelRateLimitRule } from '../types'
 
 export interface ModelRoute {
   baseUrl: string
   apiKey: string
   model: string
+  rateLimits?: ModelRateLimitRule[]
 }
 
 interface RateLimitBody {
@@ -21,6 +23,7 @@ interface RouteState {
   tail: Promise<unknown>
   cooldownUntil: number
   message: string
+  nextRequestAt: number
 }
 
 const routeStates = new Map<string, RouteState>()
@@ -39,6 +42,8 @@ export async function withModelRateLimit<T>(route: ModelRoute, fn: () => Promise
   const state = stateFor(key)
   const run = async () => {
     assertReady(route, state)
+    await waitForConfiguredSlot(route, state)
+    assertReady(route, state)
     try {
       return await fn()
     } catch (e) {
@@ -54,10 +59,41 @@ export async function withModelRateLimit<T>(route: ModelRoute, fn: () => Promise
 function stateFor(key: string): RouteState {
   let state = routeStates.get(key)
   if (!state) {
-    state = { tail: Promise.resolve(), cooldownUntil: 0, message: '' }
+    state = { tail: Promise.resolve(), cooldownUntil: 0, message: '', nextRequestAt: 0 }
     routeStates.set(key, state)
   }
   return state
+}
+
+export function matchingModelRateLimit(
+  model: string,
+  rules?: ModelRateLimitRule[]
+): ModelRateLimitRule | null {
+  const normalizedModel = model.trim().toLowerCase()
+  if (!normalizedModel) return null
+  return (rules ?? []).find((rule) => (
+    rule.enabled
+    && rule.model.trim().toLowerCase() === normalizedModel
+    && Number.isFinite(rule.requestsPerMinute)
+    && rule.requestsPerMinute > 0
+  )) ?? null
+}
+
+async function waitForConfiguredSlot(route: ModelRoute, state: RouteState): Promise<void> {
+  const rule = matchingModelRateLimit(route.model, route.rateLimits)
+  if (!rule) return
+  const remainingMs = state.nextRequestAt - Date.now()
+  if (remainingMs > 0) await sleep(remainingMs)
+  state.nextRequestAt = Date.now() + intervalMs(rule)
+}
+
+function intervalMs(rule: ModelRateLimitRule): number {
+  const requestsPerMinute = Math.max(1, Math.min(3600, Math.floor(rule.requestsPerMinute)))
+  return Math.ceil(60_000 / requestsPerMinute)
+}
+
+function sleep(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms))
 }
 
 function assertReady(route: ModelRoute, state: RouteState) {

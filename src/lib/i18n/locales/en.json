@@ -405,7 +405,16 @@
     "forget": "Forget",
     "advanced": "Advanced",
     "timeout": "Request timeout (ms)",
-    "maxRetries": "Max retries"
+    "maxRetries": "Max retries",
+    "modelRateLimits": "Model rate limits",
+    "modelRateLimitsBody": "Throttle chat requests per exact model slug. Applies to target, judge, mutator, preflight, intake, and dataset generation.",
+    "modelRateLimitsEmpty": "No configured limits. Upstream 429 cooldowns are still handled automatically.",
+    "modelRateLimitEnabled": "Enabled",
+    "modelRateLimitModel": "Model",
+    "modelRateLimitRpm": "Requests/min",
+    "modelRateLimitAdd": "Add rule",
+    "modelRateLimitAddCurrent": "Add current models",
+    "modelRateLimitRemove": "Remove"
   },
   "errors": {
     "network": "Network error",

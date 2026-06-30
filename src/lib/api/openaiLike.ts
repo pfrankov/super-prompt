@@ -1,6 +1,7 @@
 import { ApiError } from './errors'
 import { withModelRateLimit } from './modelRateLimit'
 import { isMockProviderUrl, mockChatCompletion } from './mockOpenai'
+import type { ModelRateLimitRule } from '../types'
 
 export interface ChatMessage {
   role: 'system' | 'user' | 'assistant'
@@ -18,6 +19,7 @@ export interface ChatRequest {
   extra?: Record<string, unknown>
   signal?: AbortSignal
   timeoutMs?: number
+  rateLimits?: ModelRateLimitRule[]
 }
 
 export interface ChatResponse {

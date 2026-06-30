@@ -13,6 +13,7 @@ export const defaultProvider = (): ProviderConfig => ({
   judgeModel: 'openai/gpt-4o',
   requestTimeoutMs: 60_000,
   maxRetries: 5,
+  modelRateLimits: [],
 })
 
 export const defaultArbitrator = (): ArbitratorConfig => ({
@@ -45,6 +46,7 @@ export async function getSettings(): Promise<AppSettings> {
   // `mutatorModel` removal is best-effort — `delete` is harmless if absent.
   const provider = cleaned.provider as ProviderConfig & { mutatorModel?: string }
   if ('mutatorModel' in provider) delete provider.mutatorModel
+  if (!Array.isArray(provider.modelRateLimits)) provider.modelRateLimits = []
   cleaned.provider = provider
   return cleaned
 }

@@ -463,6 +463,7 @@
           baseUrl: route.baseUrl,
           apiKey: route.apiKey,
           requestTimeoutMs: snapshot.provider.requestTimeoutMs,
+          modelRateLimits: snapshot.provider.modelRateLimits,
         },
         model: route.model || snapshot.provider.judgeModel,
         prompt: task.initialPrompt,

@@ -93,6 +93,7 @@ export async function runPreflight(args: RunPreflightArgs): Promise<PreflightRes
       maxTokens: 200,
       timeoutMs: args.provider.requestTimeoutMs,
       signal: args.signal,
+      rateLimits: args.provider.modelRateLimits,
     })
     if (target.text.trim()) {
       steps.push(ok('target', 'Target model returned a non-empty answer.'))
@@ -135,6 +136,7 @@ export async function runPreflight(args: RunPreflightArgs): Promise<PreflightRes
       maxTokens: 800,
       timeoutMs: args.provider.requestTimeoutMs,
       signal: args.signal,
+      rateLimits: args.provider.modelRateLimits,
     })
     if (parseJudgeJson(judge.text)) {
       steps.push(ok('judgeJson', 'Judge returns parseable JSON.'))
@@ -176,6 +178,7 @@ export async function runPreflight(args: RunPreflightArgs): Promise<PreflightRes
       maxTokens: 1000,
       timeoutMs: args.provider.requestTimeoutMs,
       signal: args.signal,
+      rateLimits: args.provider.modelRateLimits,
     })
     if (parseMutatorJson(mutator.text)) {
       steps.push(ok('mutatorJson', 'Mutator returns parseable JSON.'))

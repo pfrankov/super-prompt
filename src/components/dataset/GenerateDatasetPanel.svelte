@@ -40,6 +40,7 @@
         temperature: 0.8,
         maxTokens: 2000,
         timeoutMs: p.requestTimeoutMs,
+        rateLimits: p.modelRateLimits,
       })
       const jsonMatch = resp.text.match(/\[[\s\S]*\]/)
       if (!jsonMatch) throw new Error('No JSON array found in response')

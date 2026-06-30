@@ -82,6 +82,47 @@ describe('chatCompletion', () => {
       chatCompletion({ baseUrl: 'http://l', apiKey: 'k', model: 'm', messages: [] })
     ).rejects.toMatchObject({ status: 400, retriable: false })
   })
+
+  it('spaces same-model requests with configured RPM limits', async () => {
+    vi.useFakeTimers()
+    try {
+      ;(global.fetch as any).mockResolvedValue(okResponse('ok'))
+      const req = {
+        baseUrl: 'http://l',
+        apiKey: 'k',
+        model: 'limited-model',
+        messages: [],
+        rateLimits: [{ id: 'r1', enabled: true, model: 'limited-model', requestsPerMinute: 60 }],
+      }
+
+      await chatCompletion(req)
+      const second = chatCompletion(req)
+      await vi.advanceTimersByTimeAsync(999)
+      expect(global.fetch).toHaveBeenCalledTimes(1)
+
+      await vi.advanceTimersByTimeAsync(1)
+      await expect(second).resolves.toMatchObject({ text: 'ok' })
+      expect(global.fetch).toHaveBeenCalledTimes(2)
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  it('does not throttle a different model with the same provider key', async () => {
+    vi.useFakeTimers()
+    try {
+      ;(global.fetch as any).mockResolvedValue(okResponse('ok'))
+      const rateLimits = [{ id: 'r1', enabled: true, model: 'limited-model', requestsPerMinute: 60 }]
+
+      await chatCompletion({ baseUrl: 'http://l', apiKey: 'k', model: 'limited-model', messages: [], rateLimits })
+      const other = await chatCompletion({ baseUrl: 'http://l', apiKey: 'k', model: 'other-model', messages: [], rateLimits })
+
+      expect(other.text).toBe('ok')
+      expect(global.fetch).toHaveBeenCalledTimes(2)
+    } finally {
+      vi.useRealTimers()
+    }
+  })
 })
 
 describe('chatCompletionWithRetry', () => {
