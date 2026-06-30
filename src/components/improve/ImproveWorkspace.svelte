@@ -19,7 +19,6 @@
   import TextField from '../ui/TextField.svelte'
   import NumberField from '../ui/NumberField.svelte'
   import Tag from '../ui/Tag.svelte'
-  import Tooltip from '../ui/Tooltip.svelte'
   import ProgressChart from '../chart/ProgressChart.svelte'
   import RunStats from '../run/RunStats.svelte'
   import CandidateTimeline from '../run/CandidateTimeline.svelte'
@@ -828,35 +827,11 @@
             {configEdited ? $_('run.plan.custom') : $_(plan.kind === 'local' ? 'run.plan.local' : 'run.plan.cloud')}
           </Tag>
         </div>
-        <dl class="plan-list">
-          <div>
-            <dt>
-              <span>{$_('run.iterationsCap')}</span>
-              <Tooltip text={$_('run.hints.iterationsCap')} placement="bottom">
-                <button type="button" class="hint-dot" aria-label={$_('run.hints.iterationsCap')}>?</button>
-              </Tooltip>
-            </dt>
-            <dd>{config.iterationsCap}</dd>
-          </div>
-          <div>
-            <dt>
-              <span>{$_('run.sampleSize')}</span>
-              <Tooltip text={$_('run.hints.sampleSize')} placement="bottom">
-                <button type="button" class="hint-dot" aria-label={$_('run.hints.sampleSize')}>?</button>
-              </Tooltip>
-            </dt>
-            <dd>{config.sampleSizePerIter}</dd>
-          </div>
-          <div>
-            <dt>
-              <span>{$_('run.concurrency')}</span>
-              <Tooltip text={$_('run.hints.concurrency')} placement="bottom">
-                <button type="button" class="hint-dot" aria-label={$_('run.hints.concurrency')}>?</button>
-              </Tooltip>
-            </dt>
-            <dd>{config.concurrency}</dd>
-          </div>
-        </dl>
+        <p class="panel-copy">
+          {configEdited
+            ? $_('run.plan.customBody')
+            : $_(plan.kind === 'local' ? 'run.plan.localBody' : 'run.plan.cloudBody')}
+        </p>
         {#if configEdited}
           <div class="setup-actions">
             <Button size="sm" variant="ghost" onclick={applySmartPlan}>{$_('run.plan.apply')}</Button>
@@ -1324,57 +1299,6 @@
     margin: 0;
     color: var(--ink-3);
     font-size: var(--fs-sm);
-  }
-  .plan-list {
-    display: grid;
-    gap: var(--s-2);
-    margin: 0;
-  }
-  .plan-list div {
-    display: grid;
-    grid-template-columns: minmax(0, 1fr) auto;
-    align-items: center;
-    gap: var(--s-3);
-    min-height: 30px;
-    color: var(--ink-2);
-    font-size: var(--fs-sm);
-  }
-  .plan-list dt,
-  .plan-list dd {
-    margin: 0;
-  }
-  .plan-list dt {
-    display: inline-flex;
-    align-items: center;
-    gap: var(--s-2);
-    min-width: 0;
-  }
-  .plan-list dd {
-    color: var(--ink-1);
-    font-variant-numeric: tabular-nums;
-  }
-  .hint-dot {
-    display: inline-flex;
-    align-items: center;
-    justify-content: center;
-    width: 16px;
-    height: 16px;
-    border: 1px solid var(--border-2);
-    border-radius: var(--r-pill);
-    color: var(--ink-3);
-    font-size: 10px;
-    line-height: 1;
-    cursor: help;
-    transition:
-      color var(--dur-fast) var(--ease),
-      border-color var(--dur-fast) var(--ease),
-      background-color var(--dur-fast) var(--ease);
-  }
-  .hint-dot:hover,
-  .hint-dot:focus-visible {
-    color: var(--ink-1);
-    border-color: rgba(238, 183, 124, 0.45);
-    background: rgba(238, 183, 124, 0.08);
   }
   .setup-actions {
     display: flex;
