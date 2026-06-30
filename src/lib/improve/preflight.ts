@@ -4,13 +4,7 @@ import { tryParseJson } from '../optimizer/extract-json'
 import { judgeSystemPrompt } from '../optimizer/prompts/judgeSystem'
 import { mutatorSystemPrompt } from '../optimizer/prompts/mutatorSystem'
 import { judgeRoute } from '../optimizer/judge'
-import {
-  isRunnableProvider,
-  listProviderModels,
-  providerKindFromBaseUrl,
-  selectJudgeModel,
-  type JudgeModelSelection,
-} from './model-routing'
+import { isRunnableProvider } from './model-routing'
 
 export type PreflightKey = 'provider' | 'target' | 'judgeJson' | 'mutatorJson'
 export type PreflightStatus = 'ok' | 'warn' | 'fail'
@@ -24,8 +18,6 @@ export interface PreflightStep {
 
 export interface PreflightResult {
   ready: boolean
-  selection: JudgeModelSelection
-  models: string[]
   steps: PreflightStep[]
 }
 
@@ -80,23 +72,12 @@ function parseMutatorJson(text: string): boolean {
 
 export async function runPreflight(args: RunPreflightArgs): Promise<PreflightResult> {
   const steps: PreflightStep[] = []
-  const kind = providerKindFromBaseUrl(args.provider.baseUrl)
-  let models: string[] = []
-  let selection = selectJudgeModel([], args.provider.targetModel, kind)
 
   if (!isRunnableProvider(args.provider)) {
     steps.push(fail('provider', 'Provider needs an API key or a local endpoint.', 'Add an API key or switch to local Ollama.'))
-    return { ready: false, selection, models, steps }
+    return { ready: false, steps }
   }
-
-  try {
-    models = await listProviderModels(args.provider)
-    selection = selectJudgeModel(models, args.provider.targetModel, kind)
-    steps.push(ok('provider', models.length ? `${models.length} models detected.` : 'Provider is reachable.'))
-  } catch (e) {
-    steps.push(fail('provider', e instanceof Error ? e.message : 'Provider model list failed.', 'Check Base URL, CORS, and API key.'))
-    return { ready: false, selection, models, steps }
-  }
+  steps.push(ok('provider', 'Provider configuration is usable for a direct chat request.'))
 
   const item = firstItem(args.items)
   try {
@@ -205,14 +186,8 @@ export async function runPreflight(args: RunPreflightArgs): Promise<PreflightRes
     steps.push(fail('mutatorJson', e instanceof Error ? e.message : 'Mutator check failed.', 'Use a reachable mutator model.'))
   }
 
-  if (selection.fallback && steps.every((step) => step.status !== 'fail')) {
-    steps.push(warn('judgeJson', selection.reason, 'A stronger judge model may improve optimization quality.'))
-  }
-
   return {
     ready: preflightReady(steps),
-    selection,
-    models,
     steps,
   }
 }

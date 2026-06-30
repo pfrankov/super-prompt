@@ -25,7 +25,7 @@
   let total = $state(0)
   let offset = $state(0)
   let localDataset: Dataset | null = $state(null)
-  const pageSize = 50
+  const pageSize = 10
 
   let newInput = $state('')
   let newExpected = $state('')

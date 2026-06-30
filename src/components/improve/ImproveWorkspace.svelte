@@ -10,7 +10,7 @@
   import { optimizationState, pause, reset, resume, start, stop } from '../../stores/worker'
   import { t } from '../../stores/toast'
   import { analyzePrompt, canAutoReplaceExamples, examplesAreManual, generatedItemsFromAnalysis, promptFingerprint } from '../../lib/improve/intake'
-  import { isRunnableProvider, listProviderModels, providerKindFromBaseUrl, selectJudgeModel, type JudgeModelSelection } from '../../lib/improve/model-routing'
+  import { isRunnableProvider, providerKindFromBaseUrl } from '../../lib/improve/model-routing'
   import { nextPreflightAction, runPreflight, type PreflightResult } from '../../lib/improve/preflight'
   import { judgeRoute } from '../../lib/optimizer/judge'
 
@@ -28,8 +28,9 @@
   let { task = $bindable() as Task }: { task: Task } = $props()
 
   type FlowState = 'idle' | 'intake' | 'preflight' | 'starting' | 'error'
-  type StageStep = Extract<RunStageKey, 'intake' | 'preflight' | 'starting' | 'selecting' | 'mutating' | 'sampling' | 'answering' | 'judging' | 'scoring' | 'persisting' | 'completed'>
+  type PhaseKey = 'prepare' | 'mutate' | 'answer' | 'judge' | 'decide' | 'done'
   type StageStatus = 'pending' | 'active' | 'done' | 'error'
+  type WorkCell = { label: string; status: StageStatus }
   type SmartPlan = {
     kind: 'local' | 'cloud'
     iterationsCap: number
@@ -54,7 +55,6 @@
   let flowMessage = $state('')
   let flowError = $state('')
   let preflight = $state<PreflightResult | null>(null)
-  let judgeSelection = $state<JudgeModelSelection | null>(null)
   let compareOpen = $state(false)
   let configEdited = $state(false)
   let tempsEdited = $state(false)
@@ -62,7 +62,7 @@
   let providerSaveTimer: number | undefined
   let intakeController: AbortController | null = null
   let preflightController: AbortController | null = null
-  const stageSteps: StageStep[] = ['intake', 'preflight', 'starting', 'selecting', 'mutating', 'sampling', 'answering', 'judging', 'scoring', 'persisting', 'completed']
+  const phaseSteps: PhaseKey[] = ['prepare', 'mutate', 'answer', 'judge', 'decide', 'done']
 
   function smartPlan(baseUrl: string, itemCount: number): SmartPlan {
     const local = providerKindFromBaseUrl(baseUrl) === 'local'
@@ -248,30 +248,56 @@
     return $optimizationState.stage
   }
 
-  function stageRank(key: RunStageKey | null): number {
-    if (!key) return -1
-    if (key === 'paused' || key === 'stopped' || key === 'failed') {
-      return Math.max(0, stageRank($optimizationState.stage?.key ?? null))
+  function phaseForStage(key: RunStageKey | null): PhaseKey | null {
+    switch (key) {
+      case 'intake':
+      case 'preflight':
+      case 'starting':
+      case 'selecting':
+      case 'sampling':
+        return 'prepare'
+      case 'mutating':
+        return 'mutate'
+      case 'answering':
+        return 'answer'
+      case 'judging':
+        return 'judge'
+      case 'scoring':
+      case 'persisting':
+        return 'decide'
+      case 'completed':
+        return 'done'
+      case 'paused':
+      case 'stopped':
+      case 'failed':
+        return phaseForStage($optimizationState.stage?.key ?? null)
+      default:
+        return null
     }
-    return stageSteps.indexOf(key as StageStep)
   }
 
-  function stageStatus(step: StageStep): StageStatus {
-    if (currentStageKey === 'failed' && step === stageSteps[Math.max(0, stageRank($optimizationState.stage?.key ?? 'starting'))]) return 'error'
+  function phaseRank(phase: PhaseKey | null): number {
+    return phase ? phaseSteps.indexOf(phase) : -1
+  }
+
+  function phaseStatus(step: PhaseKey): StageStatus {
+    const currentPhase = phaseForStage(currentStageKey)
+    if (currentStageKey === 'failed' && step === (currentPhase ?? 'prepare')) return 'error'
     if (currentStageKey === 'stopped' || currentStageKey === 'paused') {
-      return stageRank(step) === stageRank($optimizationState.stage?.key ?? 'starting') ? 'active' : stageRank(step) < stageRank($optimizationState.stage?.key ?? 'starting') ? 'done' : 'pending'
+      const lastPhase = phaseForStage($optimizationState.stage?.key ?? 'starting')
+      return phaseRank(step) === phaseRank(lastPhase) ? 'active' : phaseRank(step) < phaseRank(lastPhase) ? 'done' : 'pending'
     }
-    const current = stageRank(currentStageKey)
-    const rank = stageRank(step)
+    const current = phaseRank(currentPhase)
+    const rank = phaseRank(step)
     if (rank < current || currentStageKey === 'completed') return 'done'
     if (rank === current) return 'active'
     return 'pending'
   }
 
   function stageProgressPercent(): number {
-    const rank = stageRank(currentStageKey)
+    const rank = phaseRank(phaseForStage(currentStageKey))
     if (rank < 0) return 0
-    const last = stageSteps.length - 1
+    const last = phaseSteps.length - 1
     if (currentStageKey === 'completed') return 100
     const sampleFraction = liveStage?.sampleCount ? Math.min(0.85, Math.max(0, (liveStage.sampleIndex ?? 0) / liveStage.sampleCount)) : 0
     return Math.max(4, Math.min(100, ((Math.min(rank, last) + sampleFraction) / last) * 100))
@@ -349,17 +375,50 @@
     return $_('improve.stage.scores', { values: { parent: scoreText(liveStage?.parentScore), child: scoreText(liveStage?.challengerScore) } })
   }
 
-  async function syncJudgeModel(): Promise<JudgeModelSelection> {
-    const providerForModels = get(settings).provider
-    const models = await listProviderModels(providerForModels)
-    const latest = get(settings)
-    const sameProvider =
-      latest.provider.baseUrl === providerForModels.baseUrl
-      && latest.provider.apiKey === providerForModels.apiKey
-    const kind = providerKindFromBaseUrl(latest.provider.baseUrl)
-    const selection = selectJudgeModel(sameProvider ? models : [], latest.provider.targetModel, kind)
-    judgeSelection = selection
-    return selection
+  function pairWorkCells(): WorkCell[] {
+    const count = liveStage?.sampleCount ?? 0
+    if (!count || !currentStageKey) return []
+    const afterAnswer = ['judging', 'scoring', 'persisting', 'completed'].includes(currentStageKey)
+    const afterJudge = ['scoring', 'persisting', 'completed'].includes(currentStageKey)
+    const activeAnswer = currentStageKey === 'answering'
+    const activeJudge = currentStageKey === 'judging'
+    const sampleIndex = Math.max(0, liveStage?.sampleIndex ?? 0)
+    const cells: WorkCell[] = []
+    for (let i = 1; i <= count; i += 1) {
+      cells.push({
+        label: $_('improve.stage.work.answer', { values: { n: i } }),
+        status: afterAnswer || (activeAnswer && i < sampleIndex) ? 'done' : activeAnswer && i === sampleIndex ? 'active' : 'pending',
+      })
+    }
+    for (let i = 1; i <= count; i += 1) {
+      cells.push({
+        label: $_('improve.stage.work.judge', { values: { n: i } }),
+        status: afterJudge || (activeJudge && i < sampleIndex) ? 'done' : activeJudge && i === sampleIndex ? 'active' : 'pending',
+      })
+    }
+    return cells
+  }
+
+  function decisionText(): string {
+    if (currentStageKey === 'completed') return $_('improve.stage.decision.complete')
+    if (currentStageKey !== 'scoring' && currentStageKey !== 'persisting') return $_('improve.stage.decision.waiting')
+    const parentScore = liveStage?.parentScore
+    const childScore = liveStage?.challengerScore
+    if (parentScore == null || childScore == null) return $_('improve.stage.decision.scoring')
+    if (Math.abs(parentScore - childScore) < 0.05) return $_('improve.stage.decision.tie')
+    return childScore > parentScore ? $_('improve.stage.decision.challenger') : $_('improve.stage.decision.parent')
+  }
+
+  function verdictStatsText(): string {
+    if (liveStage?.wins == null && liveStage?.losses == null && liveStage?.ties == null) return ''
+    return $_('improve.stage.verdicts', {
+      values: {
+        parent: liveStage?.wins ?? 0,
+        challenger: liveStage?.losses ?? 0,
+        ties: liveStage?.ties ?? 0,
+        failed: liveStage?.failedPairs ?? 0,
+      },
+    })
   }
 
   async function runIntake(): Promise<boolean> {
@@ -381,13 +440,6 @@
     flowMessage = $_('improve.status.generating')
 
     try {
-      let selection: JudgeModelSelection | null = null
-      try {
-        selection = await syncJudgeModel()
-      } catch {
-        selection = selectJudgeModel([], $settings.provider.targetModel, providerKindFromBaseUrl($settings.provider.baseUrl))
-        judgeSelection = selection
-      }
       const snapshot = get(settings)
       const route = judgeRoute(snapshot.provider, snapshot.arbitrator)
       const analysis = await analyzePrompt({
@@ -396,7 +448,7 @@
           apiKey: route.apiKey,
           requestTimeoutMs: snapshot.provider.requestTimeoutMs,
         },
-        model: route.model || selection?.model || snapshot.provider.judgeModel,
+        model: route.model || snapshot.provider.judgeModel,
         prompt: task.initialPrompt,
         targetModel: snapshot.provider.targetModel,
         count: 8,
@@ -432,11 +484,6 @@
     flowError = ''
     flowMessage = $_('improve.status.preflight')
     try {
-      try {
-        await syncJudgeModel()
-      } catch {
-        // The structured preflight below will report the provider problem.
-      }
       const snapshot = get(settings)
       const result = await runPreflight({
         provider: snapshot.provider,
@@ -480,8 +527,6 @@
       flowError = $_('errors.noDataset')
       return
     }
-    const checked = await runChecks()
-    if (!checked) return
     flowState = 'starting'
     flowMessage = $_('improve.status.starting')
     const run = await createRun(task.id, config)
@@ -552,9 +597,6 @@
       <div class="judge-chip">
         <span class="chip-label">{$_('improve.judgeLabel')}</span>
         <strong>{$settings.arbitrator.enabled ? $settings.arbitrator.model : $settings.provider.judgeModel}</strong>
-        {#if judgeSelection}
-          <span>{judgeSelection.reason}</span>
-        {/if}
       </div>
     </div>
 
@@ -601,11 +643,37 @@
           </div>
         </div>
         <div class="stage-meter" aria-hidden="true">
-          <span style={`width: ${stageProgress}%`}></span>
+          <span style={`transform: scaleX(${stageProgress / 100})`}></span>
+        </div>
+        <div class="versus-board" aria-label={$_('improve.stage.matchup')}>
+          <div>
+            <span>{$_('improve.stage.parent')}</span>
+            <strong>{shortCandidate(liveStage?.parentCandidateId)}</strong>
+            <small>{scoreText(liveStage?.parentScore)}</small>
+          </div>
+          <span class="versus">vs</span>
+          <div>
+            <span>{$_('improve.stage.challenger')}</span>
+            <strong>{shortCandidate(liveStage?.challengerCandidateId)}</strong>
+            <small>{scoreText(liveStage?.challengerScore)}</small>
+          </div>
+        </div>
+        {#if pairWorkCells().length}
+          <div class="work-cells" aria-label={$_('improve.stage.work.title')}>
+            {#each pairWorkCells() as cell, i (`${cell.label}-${i}`)}
+              <span class:done={cell.status === 'done'} class:active={cell.status === 'active'} class:error={cell.status === 'error'}>
+                <i aria-hidden="true"></i>{cell.label}
+              </span>
+            {/each}
+          </div>
+        {/if}
+        <div class="decision-row">
+          <strong>{decisionText()}</strong>
+          {#if verdictStatsText()}<span>{verdictStatsText()}</span>{/if}
         </div>
         <ol class="stage-steps" aria-label={$_('improve.stage.title')}>
-          {#each stageSteps as step}
-            {@const status = stageStatus(step)}
+          {#each phaseSteps as step}
+            {@const status = phaseStatus(step)}
             <li
               class:done={status === 'done'}
               class:active={status === 'active'}
@@ -613,7 +681,7 @@
               aria-current={status === 'active' ? 'step' : undefined}
             >
               <span class="step-dot" aria-hidden="true"></span>
-              <span>{$_(`improve.stage.steps.${step}`)}</span>
+              <span>{$_(`improve.stage.phases.${step}`)}</span>
             </li>
           {/each}
         </ol>
@@ -935,22 +1003,117 @@
   .stage-meter span {
     position: absolute;
     inset: 0 auto 0 0;
-    width: 0;
+    width: 100%;
     border-radius: inherit;
     background: linear-gradient(90deg, var(--acc-sky), var(--primary));
-    transition: width var(--dur-base) var(--ease-out);
+    transform-origin: left center;
+    transition: transform 220ms var(--ease-out);
   }
-  .stage-meter span::after {
-    content: "";
-    position: absolute;
-    inset: 0;
-    background: linear-gradient(90deg, transparent, rgba(255, 255, 255, 0.55), transparent);
-    transform: translateX(-100%);
-    animation: stage-sheen 1.45s var(--ease-out) infinite;
+  .versus-board {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) auto minmax(0, 1fr);
+    gap: var(--s-2);
+    align-items: stretch;
+  }
+  .versus-board > div {
+    min-width: 0;
+    display: grid;
+    gap: 2px;
+    padding: var(--s-3);
+    border: 1px solid var(--border-1);
+    border-radius: var(--r-md);
+    background: color-mix(in srgb, var(--bg-2) 72%, black);
+  }
+  .versus-board span,
+  .versus-board small {
+    color: var(--ink-3);
+    font-size: var(--fs-xs);
+  }
+  .versus-board strong {
+    min-width: 0;
+    color: var(--ink-1);
+    font-family: var(--font-mono);
+    font-size: var(--fs-sm);
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+  .versus {
+    align-self: center;
+    color: var(--ink-4);
+    font-size: var(--fs-xs);
+  }
+  .work-cells {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(74px, 1fr));
+    gap: var(--s-2);
+  }
+  .work-cells span {
+    min-width: 0;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    gap: 6px;
+    min-height: 28px;
+    padding: 0 var(--s-2);
+    border: 1px solid var(--border-1);
+    border-radius: var(--r-sm);
+    background: color-mix(in srgb, var(--bg-2) 70%, black);
+    color: var(--ink-3);
+    font-size: var(--fs-xs);
+    font-variant-numeric: tabular-nums;
+    transition: background-color 180ms var(--ease), border-color 180ms var(--ease), color 180ms var(--ease), transform 180ms var(--ease-out);
+  }
+  .work-cells i {
+    width: 7px;
+    height: 7px;
+    border-radius: 50%;
+    border: 1px solid currentColor;
+  }
+  .work-cells span.done {
+    color: var(--ok);
+    border-color: rgba(159, 202, 173, 0.28);
+    background: rgba(159, 202, 173, 0.07);
+  }
+  .work-cells span.done i {
+    background: var(--ok);
+    border-color: var(--ok);
+  }
+  .work-cells span.active {
+    color: var(--ink-1);
+    border-color: rgba(238, 183, 124, 0.42);
+    background: rgba(238, 183, 124, 0.1);
+    transform: translateY(-1px);
+  }
+  .work-cells span.active i {
+    background: var(--primary);
+    border-color: var(--primary);
+    animation: stage-pulse 1.15s var(--ease-out) infinite;
+  }
+  .decision-row {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    justify-content: space-between;
+    gap: var(--s-2);
+    min-height: 34px;
+    padding: var(--s-2) var(--s-3);
+    border: 1px solid var(--border-1);
+    border-radius: var(--r-md);
+    color: var(--ink-2);
+    background: rgba(159, 191, 216, 0.05);
+    font-size: var(--fs-sm);
+  }
+  .decision-row strong {
+    color: var(--ink-1);
+    font-weight: 600;
+  }
+  .decision-row span {
+    color: var(--ink-3);
+    font-size: var(--fs-xs);
   }
   .stage-steps {
     display: grid;
-    grid-template-columns: repeat(6, minmax(78px, 1fr));
+    grid-template-columns: repeat(6, minmax(0, 1fr));
     gap: var(--s-2);
     padding: 0;
     margin: 0;
@@ -1186,6 +1349,7 @@
   .chart {
     height: 220px;
     margin-top: var(--s-4);
+    min-width: 0;
   }
   .budget {
     display: inline-flex;
@@ -1203,7 +1367,7 @@
       grid-column: 1;
     }
     .stage-steps {
-      grid-template-columns: repeat(4, minmax(0, 1fr));
+      grid-template-columns: repeat(3, minmax(0, 1fr));
     }
   }
   @media (max-width: 680px) {
@@ -1232,6 +1396,12 @@
     }
     .stage-steps {
       grid-template-columns: repeat(2, minmax(0, 1fr));
+    }
+    .versus-board {
+      grid-template-columns: 1fr;
+    }
+    .versus {
+      justify-self: center;
     }
     .primary-head,
     .result-head,
@@ -1276,8 +1446,5 @@
   @keyframes stage-pulse {
     0%, 100% { box-shadow: 0 0 0 4px rgba(238, 183, 124, 0.1); }
     50% { box-shadow: 0 0 0 8px rgba(238, 183, 124, 0.18); }
-  }
-  @keyframes stage-sheen {
-    to { transform: translateX(100%); }
   }
 </style>

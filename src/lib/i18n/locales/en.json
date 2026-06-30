@@ -86,6 +86,8 @@
     "expected": "Expected output",
     "notes": "Notes",
     "actions": "Actions",
+    "clear": "Clear",
+    "clearConfirm": "Confirm clear",
     "rows_one": "{count} example",
     "rows_other": "{count} examples",
     "noDataset": "No dataset yet",
@@ -115,12 +117,12 @@
   },
   "improve": {
     "title": "Improve a prompt",
-    "subtitle": "Paste a prompt and target model. Super-Prompt builds examples, checks models, then runs GEPA.",
+    "subtitle": "Paste a prompt and target model. Super-Prompt builds examples, then runs GEPA.",
     "promptLabel": "Prompt to improve",
     "promptPlaceholder": "Paste the system prompt you use today…",
     "primary": "Improve prompt",
     "regenerateExamples": "Regenerate examples",
-    "check": "Check models",
+    "check": "Test calls",
     "judgeLabel": "Judge + mutator",
     "stage": {
       "title": "Improvement process",
@@ -128,6 +130,31 @@
       "iteration": "Iteration {current}/{total}",
       "samples": "Examples {current}/{total}",
       "scores": "parent {parent} · challenger {child}",
+      "matchup": "Current prompt comparison",
+      "parent": "Parent",
+      "challenger": "Challenger",
+      "verdicts": "parent {parent} · challenger {challenger} · ties {ties} · failed {failed}",
+      "phases": {
+        "prepare": "Prepare",
+        "mutate": "Mutate",
+        "answer": "Answer",
+        "judge": "Judge",
+        "decide": "Decide",
+        "done": "Done"
+      },
+      "work": {
+        "title": "Request progress",
+        "answer": "A{n}",
+        "judge": "J{n}"
+      },
+      "decision": {
+        "waiting": "Waiting for pair results",
+        "scoring": "Scoring current comparison",
+        "parent": "Parent is leading",
+        "challenger": "Challenger is leading",
+        "tie": "Scores are tied",
+        "complete": "Run complete"
+      },
       "steps": {
         "idle": "Waiting",
         "intake": "Examples",
@@ -146,9 +173,9 @@
         "failed": "Failed"
       },
       "detail": {
-        "idle": "The run starts after examples and model checks are ready.",
+        "idle": "The run starts after examples are ready.",
         "intake": "Building evaluation examples and a rubric from the current prompt.",
-        "preflight": "Checking target reachability, judge JSON, and mutator JSON.",
+        "preflight": "Testing target, judge JSON, and mutator JSON calls.",
         "starting": "Creating the run and preparing the first candidates.",
         "selecting": "Selected parent {parent} with score {score}.",
         "mutating": "The mutator is creating a challenger from judge feedback.",
@@ -171,9 +198,9 @@
     "status": {
       "generating": "Generating eval examples…",
       "examplesReady": "Examples are ready.",
-      "preflight": "Checking provider, target, judge, and mutator…",
-      "preflightFailed": "Model checks need attention before the run.",
-      "ready": "All checks passed.",
+      "preflight": "Testing target, judge, and mutator calls…",
+      "preflightFailed": "Test calls need attention.",
+      "ready": "Test calls passed.",
       "starting": "Starting GEPA…",
       "providerNeeded": "Add an API key or use a local provider before examples can be generated.",
       "modelNeeded": "Choose the target model first.",
@@ -185,7 +212,7 @@
       "empty": "They will appear here after you paste a prompt."
     },
     "preflight": {
-      "title": "Model checks",
+      "title": "Call test",
       "ready": "Ready",
       "needsWork": "Needs attention"
     },
@@ -194,7 +221,7 @@
       "body": "Copy it, apply it as the new current prompt, or inspect the full GEPA history below.",
       "apply": "Apply as current",
       "emptyTitle": "Best prompt will appear here",
-      "emptyBody": "The first run starts after examples and model checks are ready."
+      "emptyBody": "The first run starts after examples are ready."
     }
   },
   "run": {
