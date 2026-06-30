@@ -270,7 +270,11 @@
       case 'paused':
       case 'stopped':
       case 'failed':
-        return phaseForStage($optimizationState.stage?.key ?? null)
+        if (flowState === 'error') return 'prepare'
+        if ($optimizationState.stage?.key && $optimizationState.stage.key !== key) {
+          return phaseForStage($optimizationState.stage.key)
+        }
+        return run?.iterationCount ? 'decide' : 'prepare'
       default:
         return null
     }
@@ -375,6 +379,15 @@
     return $_('improve.stage.scores', { values: { parent: scoreText(liveStage?.parentScore), child: scoreText(liveStage?.challengerScore) } })
   }
 
+  function hasPairContext(): boolean {
+    return !!(
+      liveStage?.parentCandidateId
+      || liveStage?.challengerCandidateId
+      || liveStage?.parentScore != null
+      || liveStage?.challengerScore != null
+    )
+  }
+
   function pairWorkCells(): WorkCell[] {
     const count = liveStage?.sampleCount ?? 0
     if (!count || !currentStageKey) return []
@@ -400,6 +413,9 @@
   }
 
   function decisionText(): string {
+    if (currentStageKey === 'failed') return $_('improve.stage.decision.failed')
+    if (currentStageKey === 'stopped') return $_('improve.stage.decision.stopped')
+    if (currentStageKey === 'paused') return $_('improve.stage.decision.paused')
     if (currentStageKey === 'completed') return $_('improve.stage.decision.complete')
     if (currentStageKey !== 'scoring' && currentStageKey !== 'persisting') return $_('improve.stage.decision.waiting')
     const parentScore = liveStage?.parentScore
@@ -645,19 +661,21 @@
         <div class="stage-meter" aria-hidden="true">
           <span style={`transform: scaleX(${stageProgress / 100})`}></span>
         </div>
-        <div class="versus-board" aria-label={$_('improve.stage.matchup')}>
-          <div>
-            <span>{$_('improve.stage.parent')}</span>
-            <strong>{shortCandidate(liveStage?.parentCandidateId)}</strong>
-            <small>{scoreText(liveStage?.parentScore)}</small>
+        {#if hasPairContext()}
+          <div class="versus-board" aria-label={$_('improve.stage.matchup')}>
+            <div>
+              <span>{$_('improve.stage.parent')}</span>
+              <strong>{shortCandidate(liveStage?.parentCandidateId)}</strong>
+              <small>{scoreText(liveStage?.parentScore)}</small>
+            </div>
+            <span class="versus">vs</span>
+            <div>
+              <span>{$_('improve.stage.challenger')}</span>
+              <strong>{shortCandidate(liveStage?.challengerCandidateId)}</strong>
+              <small>{scoreText(liveStage?.challengerScore)}</small>
+            </div>
           </div>
-          <span class="versus">vs</span>
-          <div>
-            <span>{$_('improve.stage.challenger')}</span>
-            <strong>{shortCandidate(liveStage?.challengerCandidateId)}</strong>
-            <small>{scoreText(liveStage?.challengerScore)}</small>
-          </div>
-        </div>
+        {/if}
         {#if pairWorkCells().length}
           <div class="work-cells" aria-label={$_('improve.stage.work.title')}>
             {#each pairWorkCells() as cell, i (`${cell.label}-${i}`)}
