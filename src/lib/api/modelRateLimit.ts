@@ -111,7 +111,7 @@ function assertReady(route: ModelRoute, state: RouteState) {
         model: route.model,
       },
     },
-    retriable: false,
+    retriable: true,
   })
 }
 

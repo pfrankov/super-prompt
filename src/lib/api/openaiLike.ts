@@ -95,7 +95,7 @@ async function chatCompletionNetwork(req: ChatRequest): Promise<ChatResponse> {
       status: resp.status,
       message: rateLimit?.message ?? errorInfo.message ?? `HTTP ${resp.status}`,
       body: { json, headers, rateLimit },
-      retriable: rateLimit ? false : resp.status === 429 || resp.status >= 500,
+      retriable: rateLimit ? true : resp.status === 429 || resp.status >= 500,
     })
   }
 

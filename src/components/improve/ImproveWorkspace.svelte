@@ -363,6 +363,7 @@
   }
 
   function stageIterationText(): string {
+    if (currentStageKey === 'intake' || currentStageKey === 'preflight' || currentStageKey === 'starting') return ''
     const current = Math.max(0, liveStage?.iteration ?? run?.iterationCount ?? 0)
     const total = liveStage?.totalIterations ?? run?.config.iterationsCap ?? config.iterationsCap
     if (!total) return ''
@@ -417,6 +418,7 @@
     if (currentStageKey === 'stopped') return $_('improve.stage.decision.stopped')
     if (currentStageKey === 'paused') return $_('improve.stage.decision.paused')
     if (currentStageKey === 'completed') return $_('improve.stage.decision.complete')
+    if (currentStageKey === 'intake' || currentStageKey === 'preflight' || currentStageKey === 'starting') return $_('improve.stage.decision.setup')
     if (currentStageKey !== 'scoring' && currentStageKey !== 'persisting') return $_('improve.stage.decision.waiting')
     const parentScore = liveStage?.parentScore
     const childScore = liveStage?.challengerScore

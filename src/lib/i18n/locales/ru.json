@@ -150,6 +150,7 @@
         "judge": "С{n}"
       },
       "decision": {
+        "setup": "Жду ответ API",
         "waiting": "Жду результаты пары",
         "scoring": "Считаю текущее сравнение",
         "parent": "Ведёт родитель",
@@ -170,7 +171,7 @@
         "sampling": "Выборка",
         "answering": "Ответы",
         "judging": "Оценка",
-        "scoring": "Score",
+        "scoring": "Счёт",
         "persisting": "Сохранение",
         "paused": "Пауза",
         "stopped": "Остановлен",

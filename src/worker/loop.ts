@@ -73,6 +73,12 @@ function failureVerdict(reasoning: string): JudgeVerdict {
   return { winner: 'tie', scoreA: 5, scoreB: 5, reasoning, feedbackA: '', feedbackB: '' }
 }
 
+function compactFailureReasons(outcomes: PairOutcome[], max = 600): string {
+  const reasons = [...new Set(outcomes.map((o) => o.errorMessage).filter((msg): msg is string => !!msg))]
+  const text = reasons.join('; ')
+  return text.length > max ? `${text.slice(0, max - 1)}…` : text
+}
+
 async function runOnePair(
   parent: PromptCandidate,
   challenger: PromptCandidate,
@@ -376,6 +382,7 @@ export function createRunner(opts: {
       rationale: m.rationale,
       createdAt: Date.now(),
     }
+    await addCandidate(challenger)
     emitStage('mutating', {
       iteration: run.iterationCount + 1,
       parentCandidateId: parent.id,
@@ -490,7 +497,10 @@ export function createRunner(opts: {
     const failedCount = outcomes.filter((o) => o.failed).length
     if (failedCount > 0) emitLog('warn', `iter ${iterIndex}: ${failedCount}/${outcomes.length} pairs failed`)
     const n = outcomes.length - failedCount
-    if (n === 0) throw new Error(`iter ${iterIndex}: all pairs failed`)
+    if (n === 0) {
+      const reasons = compactFailureReasons(outcomes)
+      throw new Error(`iter ${iterIndex}: all pairs failed${reasons ? `: ${reasons}` : ''}`)
+    }
     const meanParent = sumScoreParent / n
     const meanChild = sumScoreChild / n
     const parentFeedback = parentFeedbackParts.join('\n')
@@ -704,7 +714,11 @@ export function createRunner(opts: {
         emitLog('error', err.message)
         run = { ...run, status: 'failed', finishedAt: Date.now(), errorMessage: err.message }
         await patchRun(run.id, { status: 'failed', finishedAt: Date.now(), errorMessage: err.message })
-        emitStage('failed', { changeSummary: err.message })
+        emitStage('failed', {
+          iteration: stage?.iteration ?? run.iterationCount,
+          totalIterations: ctx.config.iterationsCap,
+          changeSummary: err.message,
+        })
         emitState()
         send({ type: 'ERROR', message: err.message, stack: err.stack })
       }

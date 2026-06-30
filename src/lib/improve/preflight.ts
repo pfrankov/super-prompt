@@ -1,5 +1,5 @@
 import type { ArbitratorConfig, DatasetItem, ProviderConfig, Task } from '../types'
-import { chatCompletion } from '../api/openaiLike'
+import { chatCompletionWithRetry } from '../api/openaiLike'
 import { tryParseJson } from '../optimizer/extract-json'
 import { judgeSystemPrompt } from '../optimizer/prompts/judgeSystem'
 import { mutatorSystemPrompt } from '../optimizer/prompts/mutatorSystem'
@@ -77,11 +77,11 @@ export async function runPreflight(args: RunPreflightArgs): Promise<PreflightRes
     steps.push(fail('provider', 'Provider needs an API key or a local endpoint.', 'Add an API key or switch to local Ollama.'))
     return { ready: false, steps }
   }
-  steps.push(ok('provider', 'Provider configuration is usable for a direct chat request.'))
+  steps.push(ok('provider', 'Provider configuration is complete. Network calls are tested below.'))
 
   const item = firstItem(args.items)
   try {
-    const target = await chatCompletion({
+    const target = await chatCompletionWithRetry({
       baseUrl: args.provider.baseUrl,
       apiKey: args.provider.apiKey,
       model: args.provider.targetModel,
@@ -94,7 +94,7 @@ export async function runPreflight(args: RunPreflightArgs): Promise<PreflightRes
       timeoutMs: args.provider.requestTimeoutMs,
       signal: args.signal,
       rateLimits: args.provider.modelRateLimits,
-    })
+    }, args.provider.maxRetries)
     if (target.text.trim()) {
       steps.push(ok('target', 'Target model returned a non-empty answer.'))
     } else {
@@ -106,7 +106,7 @@ export async function runPreflight(args: RunPreflightArgs): Promise<PreflightRes
 
   const route = judgeRoute(args.provider, args.arbitrator)
   try {
-    const judge = await chatCompletion({
+    const judge = await chatCompletionWithRetry({
       baseUrl: route.baseUrl,
       apiKey: route.apiKey,
       model: route.model,
@@ -137,7 +137,7 @@ export async function runPreflight(args: RunPreflightArgs): Promise<PreflightRes
       timeoutMs: args.provider.requestTimeoutMs,
       signal: args.signal,
       rateLimits: args.provider.modelRateLimits,
-    })
+    }, args.provider.maxRetries)
     if (parseJudgeJson(judge.text)) {
       steps.push(ok('judgeJson', 'Judge returns parseable JSON.'))
     } else {
@@ -148,7 +148,7 @@ export async function runPreflight(args: RunPreflightArgs): Promise<PreflightRes
   }
 
   try {
-    const mutator = await chatCompletion({
+    const mutator = await chatCompletionWithRetry({
       baseUrl: route.baseUrl,
       apiKey: route.apiKey,
       model: route.model,
@@ -179,7 +179,7 @@ export async function runPreflight(args: RunPreflightArgs): Promise<PreflightRes
       timeoutMs: args.provider.requestTimeoutMs,
       signal: args.signal,
       rateLimits: args.provider.modelRateLimits,
-    })
+    }, args.provider.maxRetries)
     if (parseMutatorJson(mutator.text)) {
       steps.push(ok('mutatorJson', 'Mutator returns parseable JSON.'))
     } else {

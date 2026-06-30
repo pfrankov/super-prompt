@@ -148,6 +148,7 @@
         "judge": "J{n}"
       },
       "decision": {
+        "setup": "Waiting for API response",
         "waiting": "Waiting for pair results",
         "scoring": "Scoring current comparison",
         "parent": "Parent is leading",

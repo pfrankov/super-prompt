@@ -47,6 +47,10 @@ export async function withBackoff<T>(fn: () => Promise<T>, opts: BackoffOptions)
 function readRetryAfter(err: ApiError): number {
   const body = err.body
   if (body && typeof body === 'object') {
+    const rateLimit = (body as { rateLimit?: { cooldownMs?: number } }).rateLimit
+    if (rateLimit?.cooldownMs && Number.isFinite(rateLimit.cooldownMs)) {
+      return Math.min(60_000, Math.max(0, rateLimit.cooldownMs))
+    }
     const headers = (body as { headers?: Record<string, string> }).headers
     const ra = headers?.['retry-after']
     if (ra) {

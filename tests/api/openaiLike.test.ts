@@ -155,46 +155,46 @@ describe('chatCompletionWithRetry', () => {
     expect(global.fetch).toHaveBeenCalledTimes(1)
   })
 
-  it('cooldowns OpenRouter upstream rate limits per model route', async () => {
-    ;(global.fetch as any)
-      .mockResolvedValueOnce(errResponse(429, {
-        error: {
-          message: 'Provider returned error',
-          code: 429,
-          metadata: {
-            raw: 'google/gemma-4-26b-a4b-it:free is temporarily rate-limited upstream. Please retry shortly, or add your own key.',
-            provider_name: 'Google AI Studio',
-            is_byok: false,
+  it('waits through OpenRouter upstream cooldowns before retrying the same model route', async () => {
+    vi.useFakeTimers()
+    try {
+      ;(global.fetch as any)
+        .mockResolvedValueOnce(errResponse(429, {
+          error: {
+            message: 'Provider returned error',
+            code: 429,
+            metadata: {
+              raw: 'google/gemma-4-26b-a4b-it:free is temporarily rate-limited upstream. Please retry shortly, or add your own key.',
+              provider_name: 'Google AI Studio',
+              is_byok: false,
+            },
           },
-        },
-      }))
-      .mockResolvedValueOnce(okResponse('other model ok'))
+        }))
+        .mockResolvedValueOnce(okResponse('same model ok'))
+        .mockResolvedValueOnce(okResponse('other model ok'))
 
-    const rateLimitedReq = {
-      baseUrl: 'https://openrouter.ai/api/v1',
-      apiKey: '',
-      model: 'google/gemma-4-26b-a4b-it:free',
-      messages: [],
+      const rateLimitedReq = {
+        baseUrl: 'https://openrouter.ai/api/v1',
+        apiKey: '',
+        model: 'google/gemma-4-26b-a4b-it:free',
+        messages: [],
+      }
+      const sameModel = chatCompletionWithRetry(rateLimitedReq, 1)
+      await vi.advanceTimersByTimeAsync(59_999)
+      expect(global.fetch).toHaveBeenCalledTimes(1)
+
+      await vi.advanceTimersByTimeAsync(1)
+      await expect(sameModel).resolves.toMatchObject({ text: 'same model ok' })
+      expect(global.fetch).toHaveBeenCalledTimes(2)
+
+      const other = await chatCompletionWithRetry({
+        ...rateLimitedReq,
+        model: 'openai/gpt-4o-mini',
+      }, 0)
+      expect(other.text).toBe('other model ok')
+      expect(global.fetch).toHaveBeenCalledTimes(3)
+    } finally {
+      vi.useRealTimers()
     }
-    await expect(chatCompletionWithRetry(rateLimitedReq, 5)).rejects.toMatchObject({
-      status: 429,
-      retriable: false,
-      message: expect.stringContaining('Google AI Studio'),
-    })
-    expect(global.fetch).toHaveBeenCalledTimes(1)
-
-    await expect(chatCompletionWithRetry(rateLimitedReq, 5)).rejects.toMatchObject({
-      status: 429,
-      retriable: false,
-      message: expect.stringContaining('Rate limited'),
-    })
-    expect(global.fetch).toHaveBeenCalledTimes(1)
-
-    const other = await chatCompletionWithRetry({
-      ...rateLimitedReq,
-      model: 'openai/gpt-4o-mini',
-    }, 0)
-    expect(other.text).toBe('other model ok')
-    expect(global.fetch).toHaveBeenCalledTimes(2)
   })
 })
