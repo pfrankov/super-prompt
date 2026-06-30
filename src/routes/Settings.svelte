@@ -521,6 +521,12 @@
   .quick-setup strong { display: block; margin-bottom: 2px; font-size: var(--fs-sm); }
   .quick-setup p { margin: 0; color: var(--ink-3); font-size: var(--fs-sm); max-width: 48ch; }
   .api-key { display: flex; flex-direction: column; gap: var(--s-2); }
+  .api-key :global(.tag) {
+    align-self: flex-start;
+    max-width: 100%;
+    white-space: normal;
+    overflow-wrap: anywhere;
+  }
   .api-actions { display: flex; gap: var(--s-3); }
   .model-actions { display: flex; justify-content: flex-end; margin-top: calc(var(--s-2) * -1); }
   .rate-limit-panel {
