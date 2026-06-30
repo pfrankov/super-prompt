@@ -249,6 +249,8 @@
     "stop": "Stop",
     "compare": "Compare A vs B",
     "noRun": "No active run",
+    "summaryTitle": "Run summary",
+    "summaryBody": "Last completed or active run. Candidate details are collapsed unless you need to inspect them.",
     "empty": "Press Start to begin the optimization loop.",
     "status": {
       "running": "Running",
@@ -284,6 +286,16 @@
       "concurrency": "{count} at once",
       "custom": "Custom",
       "apply": "Restore smart plan"
+    },
+    "hints": {
+      "iterationsCap": "How many prompt mutations to try. 1-3 is a quick smoke, 4-8 is normal for hosted cheap models, 10+ costs more but may find smaller gains.",
+      "sampleSize": "How many dataset examples each candidate pair is tested on. 2 is fast and noisy, 4 is a good default, 8+ is stricter and slower.",
+      "concurrency": "How many requests can run at once. 1 is safest for local or rate-limited models, 2-4 is usually fine for paid cloud models, 6+ can hit provider limits.",
+      "earlyStop": "Stops after this many iterations without a better score. 0 disables plateau stopping; 2-4 keeps runs from wasting tokens.",
+      "tokenBudget": "Hard token ceiling for a run. 0 means unlimited; set it when testing expensive models or a very long dataset.",
+      "judgeTemp": "Randomness for judging and scoring. Keep near 0-0.2 for stable comparisons; higher values make verdicts less repeatable.",
+      "targetTemp": "Randomness for target answers. 0-0.3 is best for summarization fidelity; higher values can add variety but more drift.",
+      "mutatorTemp": "Randomness for prompt mutations. 0.4-0.8 explores useful variants; 1+ can produce bigger but less predictable changes."
     },
     "readiness": {
       "title": "Ready to start",

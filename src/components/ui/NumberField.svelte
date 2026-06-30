@@ -6,6 +6,7 @@
     max = Infinity,
     step = 1,
     hint = '',
+    hintMode = 'visible',
     error = '',
     disabled = false,
     id = '',
@@ -20,6 +21,7 @@
     max?: number
     step?: number
     hint?: string
+    hintMode?: 'visible' | 'hover'
     error?: string
     disabled?: boolean
     id?: string
@@ -35,8 +37,12 @@
   const effectiveError = $derived(error || internalError)
 </script>
 
-<label class="field" for={fieldId}>
-  {#if label}<span class="label">{label}</span>{/if}
+<label class="field" class:hover-hint={hintMode === 'hover'} for={fieldId}>
+  {#if label}
+    <span class="label-row">
+      <span class="label">{label}</span>
+    </span>
+  {/if}
   <input
     type="number"
     bind:value
@@ -68,6 +74,12 @@
     gap: var(--s-2);
     min-width: 0;
   }
+  .label-row {
+    display: flex;
+    align-items: center;
+    gap: var(--s-2);
+    min-width: 0;
+  }
   .label { font-size: var(--fs-sm); font-weight: 500; color: var(--ink-2); }
   input {
     appearance: none;
@@ -95,6 +107,26 @@
     box-shadow: 0 0 0 3px rgba(238, 183, 124, 0.11);
   }
   input[aria-invalid="true"] { border-color: var(--err); }
-  .hint { font-size: var(--fs-xs); color: var(--ink-3); }
+  .hint {
+    font-size: var(--fs-xs);
+    color: var(--ink-3);
+    line-height: 1.4;
+    transition:
+      opacity 160ms var(--ease-out),
+      max-height 180ms var(--ease-out),
+      transform 160ms var(--ease-out);
+  }
+  .hover-hint .hint {
+    max-height: 0;
+    opacity: 0;
+    overflow: hidden;
+    transform: translateY(-2px);
+  }
+  .hover-hint:hover .hint,
+  .hover-hint:focus-within .hint {
+    max-height: 120px;
+    opacity: 1;
+    transform: translateY(0);
+  }
   .error { font-size: var(--fs-xs); color: var(--err); }
 </style>

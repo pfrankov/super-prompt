@@ -133,7 +133,8 @@
   const nextAction = $derived(preflight ? nextPreflightAction(preflight.steps) : '')
   const currentStageKey = $derived(resolveCurrentStageKey())
   const liveStage = $derived(stageForView())
-  const showStageFlow = $derived(primaryBusy || !!run || !!$optimizationState.stage)
+  const showStageFlow = $derived(primaryBusy || isRunning || isPaused || run?.status === 'failed' || run?.status === 'stopped')
+  const hasRunSummary = $derived(!!run && (isRunning || isPaused || run.status === 'failed' || run.status === 'stopped' || $optimizationState.history.length > 0))
   const stageProgress = $derived(stageProgressPercent())
 
   $effect(() => {
@@ -609,6 +610,7 @@
 </script>
 
 <div class="workspace">
+  <div class="main-flow">
   <section class="primary surface">
     <div class="primary-head">
       <div>
@@ -729,6 +731,65 @@
     {/if}
   </section>
 
+  <section class="result surface">
+    {#if bestCandidate}
+      <div class="result-head">
+        <div>
+          <h3>{$_('improve.result.title')}</h3>
+          <p>{$_('improve.result.body')}</p>
+        </div>
+        <Tag tone="ok">{bestCandidate.score?.toFixed(2) ?? '-'}</Tag>
+      </div>
+      <pre>{bestCandidate.text}</pre>
+      <div class="result-actions">
+        <Button size="sm" onclick={copyBest}>{$_('common.copy')}</Button>
+        <Button size="sm" variant="secondary" onclick={applyBest} disabled={bestIsCurrent}>
+          {bestIsCurrent ? $_('improve.result.current') : $_('improve.result.apply')}
+        </Button>
+        <Button size="sm" variant="ghost" onclick={() => (compareOpen = true)}>{$_('run.compare')}</Button>
+        <Button size="sm" variant="ghost" onclick={exportBest}>{$_('common.export')}</Button>
+      </div>
+    {:else}
+      <div class="empty-result">
+        <h3>{$_('improve.result.emptyTitle')}</h3>
+        <p>{$_('improve.result.emptyBody')}</p>
+      </div>
+    {/if}
+  </section>
+
+  {#if hasRunSummary}
+    <section class="run-details">
+      <div class="run-state surface">
+        <div class="run-state-head">
+          <div>
+            <h3>{$_('run.summaryTitle')}</h3>
+            <p>{$_('run.summaryBody')}</p>
+          </div>
+          <Tag tone={run?.status === 'running' ? 'info' : run?.status === 'paused' ? 'warn' : run?.status === 'failed' ? 'err' : run?.status === 'completed' ? 'ok' : 'neutral'}>
+            {run ? $_('run.status.' + run.status) : $_('run.noRun')}
+          </Tag>
+        </div>
+        {#if config.tokenBudget > 0}
+          <div class="budget">
+            <span class="dim">{$_('run.tokensLeft')}</span>
+            <TokenMeter used={(run?.totalTokensIn ?? 0) + (run?.totalTokensOut ?? 0)} budget={config.tokenBudget} />
+          </div>
+        {/if}
+        <RunStats />
+        <div class="chart">
+          <ProgressChart points={chartPoints} />
+        </div>
+      </div>
+      {#if $optimizationState.candidates.length}
+        <details class="candidate-details">
+          <summary>{$_('candidate.title')}</summary>
+          <CandidateTimeline />
+        </details>
+      {/if}
+    </section>
+  {/if}
+  </div>
+
   <aside class="side">
     <section class="panel setup-panel surface">
       <div class="panel-head">
@@ -768,16 +829,28 @@
         </div>
         <dl class="plan-list">
           <div>
-            <dt>{$_('run.iterationsCap')}</dt>
+            <dt>
+              <span>{$_('run.iterationsCap')}</span>
+              <button type="button" class="hint-dot" aria-label={$_('run.hints.iterationsCap')}>?</button>
+            </dt>
             <dd>{config.iterationsCap}</dd>
+            <p class="row-hint">{$_('run.hints.iterationsCap')}</p>
           </div>
           <div>
-            <dt>{$_('run.sampleSize')}</dt>
+            <dt>
+              <span>{$_('run.sampleSize')}</span>
+              <button type="button" class="hint-dot" aria-label={$_('run.hints.sampleSize')}>?</button>
+            </dt>
             <dd>{config.sampleSizePerIter}</dd>
+            <p class="row-hint">{$_('run.hints.sampleSize')}</p>
           </div>
           <div>
-            <dt>{$_('run.concurrency')}</dt>
+            <dt>
+              <span>{$_('run.concurrency')}</span>
+              <button type="button" class="hint-dot" aria-label={$_('run.hints.concurrency')}>?</button>
+            </dt>
             <dd>{config.concurrency}</dd>
+            <p class="row-hint">{$_('run.hints.concurrency')}</p>
           </div>
         </dl>
         {#if configEdited}
@@ -790,19 +863,19 @@
       <details>
         <summary>{$_('run.advanced')}</summary>
         <div class="fields">
-          <NumberField bind:value={config.iterationsCap} label={$_('run.iterationsCap')} min={1} max={500} oninput={markConfigEdited} />
-          <NumberField bind:value={config.concurrency} label={$_('run.concurrency')} min={1} max={16} oninput={markConfigEdited} />
-          <NumberField bind:value={config.sampleSizePerIter} label={$_('run.sampleSize')} min={1} max={items.length || 50} oninput={markConfigEdited} />
-          <NumberField bind:value={config.earlyStopPlateau} label={$_('run.earlyStop')} min={0} max={50} oninput={markConfigEdited} />
-          <NumberField bind:value={config.tokenBudget} label={$_('run.tokenBudget')} min={0} step={1000} oninput={markConfigEdited} />
+          <NumberField bind:value={config.iterationsCap} label={$_('run.iterationsCap')} hint={$_('run.hints.iterationsCap')} hintMode="hover" min={1} max={500} oninput={markConfigEdited} />
+          <NumberField bind:value={config.concurrency} label={$_('run.concurrency')} hint={$_('run.hints.concurrency')} hintMode="hover" min={1} max={16} oninput={markConfigEdited} />
+          <NumberField bind:value={config.sampleSizePerIter} label={$_('run.sampleSize')} hint={$_('run.hints.sampleSize')} hintMode="hover" min={1} max={items.length || 50} oninput={markConfigEdited} />
+          <NumberField bind:value={config.earlyStopPlateau} label={$_('run.earlyStop')} hint={$_('run.hints.earlyStop')} hintMode="hover" min={0} max={50} oninput={markConfigEdited} />
+          <NumberField bind:value={config.tokenBudget} label={$_('run.tokenBudget')} hint={$_('run.hints.tokenBudget')} hintMode="hover" min={0} step={1000} oninput={markConfigEdited} />
         </div>
       </details>
       <details>
         <summary>{$_('run.temperatures')}</summary>
         <div class="fields">
-          <NumberField bind:value={config.judgeTemperature} label={$_('run.judgeTemp')} min={0} max={2} step={0.1} onchange={() => (tempsEdited = true)} />
-          <NumberField bind:value={config.targetTemperature} label={$_('run.targetTemp')} min={0} max={2} step={0.1} onchange={() => (tempsEdited = true)} />
-          <NumberField bind:value={config.mutatorTemperature} label={$_('run.mutatorTemp')} min={0} max={2} step={0.1} onchange={() => (tempsEdited = true)} />
+          <NumberField bind:value={config.judgeTemperature} label={$_('run.judgeTemp')} hint={$_('run.hints.judgeTemp')} hintMode="hover" min={0} max={2} step={0.1} onchange={() => (tempsEdited = true)} />
+          <NumberField bind:value={config.targetTemperature} label={$_('run.targetTemp')} hint={$_('run.hints.targetTemp')} hintMode="hover" min={0} max={2} step={0.1} onchange={() => (tempsEdited = true)} />
+          <NumberField bind:value={config.mutatorTemperature} label={$_('run.mutatorTemp')} hint={$_('run.hints.mutatorTemp')} hintMode="hover" min={0} max={2} step={0.1} onchange={() => (tempsEdited = true)} />
         </div>
       </details>
 
@@ -824,53 +897,6 @@
       {/if}
     </section>
   </aside>
-
-  <section class="result surface">
-    {#if bestCandidate}
-      <div class="result-head">
-        <div>
-          <h3>{$_('improve.result.title')}</h3>
-          <p>{$_('improve.result.body')}</p>
-        </div>
-        <Tag tone="ok">{bestCandidate.score?.toFixed(2) ?? '-'}</Tag>
-      </div>
-      <pre>{bestCandidate.text}</pre>
-      <div class="result-actions">
-        <Button size="sm" onclick={copyBest}>{$_('common.copy')}</Button>
-        <Button size="sm" variant="secondary" onclick={applyBest} disabled={bestIsCurrent}>
-          {bestIsCurrent ? $_('improve.result.current') : $_('improve.result.apply')}
-        </Button>
-        <Button size="sm" variant="ghost" onclick={() => (compareOpen = true)}>{$_('run.compare')}</Button>
-        <Button size="sm" variant="ghost" onclick={exportBest}>{$_('common.export')}</Button>
-      </div>
-    {:else}
-      <div class="empty-result">
-        <h3>{$_('improve.result.emptyTitle')}</h3>
-        <p>{$_('improve.result.emptyBody')}</p>
-      </div>
-    {/if}
-  </section>
-
-  <section class="details">
-    <div class="run-state surface">
-      <div class="run-state-head">
-        <Tag tone={run?.status === 'running' ? 'info' : run?.status === 'paused' ? 'warn' : run?.status === 'failed' ? 'err' : run?.status === 'completed' ? 'ok' : 'neutral'}>
-          {run ? $_('run.status.' + run.status) : $_('run.noRun')}
-        </Tag>
-        {#if config.tokenBudget > 0}
-          <span class="budget">
-            <span class="dim">{$_('run.tokensLeft')}</span>
-            <TokenMeter used={(run?.totalTokensIn ?? 0) + (run?.totalTokensOut ?? 0)} budget={config.tokenBudget} />
-          </span>
-        {/if}
-      </div>
-      <RunStats />
-      <div class="chart">
-        <ProgressChart points={chartPoints} />
-      </div>
-    </div>
-    <CandidateTimeline />
-  </section>
 </div>
 
 <CompareModal
@@ -889,6 +915,12 @@
     gap: var(--s-5);
     align-items: start;
   }
+  .main-flow {
+    min-width: 0;
+    display: flex;
+    flex-direction: column;
+    gap: var(--s-5);
+  }
   .primary,
   .result,
   .run-state,
@@ -901,6 +933,13 @@
     gap: var(--s-5);
     background: var(--bg-1);
     border-color: var(--border-2);
+  }
+  .stage-flow,
+  .status-line,
+  .result,
+  .run-state,
+  .candidate-details {
+    animation: surface-enter 220ms var(--ease-out);
   }
   .primary-head,
   .result-head,
@@ -1224,6 +1263,10 @@
   .setup-panel {
     position: sticky;
     top: var(--s-4);
+    max-height: calc(100vh - var(--s-8));
+    overflow-y: auto;
+    overscroll-behavior: contain;
+    scrollbar-gutter: stable;
   }
   .setup-section {
     display: flex;
@@ -1284,9 +1327,9 @@
     margin: 0;
   }
   .plan-list div {
-    display: flex;
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) auto;
     align-items: center;
-    justify-content: space-between;
     gap: var(--s-3);
     min-height: 30px;
     color: var(--ink-2);
@@ -1296,9 +1339,61 @@
   .plan-list dd {
     margin: 0;
   }
+  .plan-list dt {
+    display: inline-flex;
+    align-items: center;
+    gap: var(--s-2);
+    min-width: 0;
+  }
   .plan-list dd {
     color: var(--ink-1);
     font-variant-numeric: tabular-nums;
+  }
+  .row-hint {
+    grid-column: 1 / -1;
+    max-height: 0;
+    margin: calc(-1 * var(--s-2)) 0 0;
+    overflow: hidden;
+    color: var(--ink-3);
+    font-size: var(--fs-xs);
+    line-height: 1.4;
+    opacity: 0;
+    transform: translateY(-2px);
+    transition:
+      opacity 160ms var(--ease-out),
+      max-height 180ms var(--ease-out),
+      margin-top 180ms var(--ease-out),
+      transform 160ms var(--ease-out);
+  }
+  .plan-list div:hover .row-hint,
+  .plan-list div:focus-within .row-hint {
+    max-height: 120px;
+    margin-top: calc(-1 * var(--s-1));
+    opacity: 1;
+    transform: translateY(0);
+  }
+  .hint-dot {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 16px;
+    height: 16px;
+    border: 1px solid var(--border-2);
+    border-radius: var(--r-pill);
+    color: var(--ink-3);
+    font-size: 10px;
+    line-height: 1;
+    cursor: help;
+    transition:
+      color var(--dur-fast) var(--ease),
+      border-color var(--dur-fast) var(--ease),
+      background-color var(--dur-fast) var(--ease);
+  }
+  .hint-dot:hover,
+  .hint-dot:focus-visible {
+    color: var(--ink-1);
+    border-color: rgba(238, 183, 124, 0.45);
+    background: rgba(238, 183, 124, 0.08);
   }
   .setup-actions {
     display: flex;
@@ -1338,6 +1433,9 @@
     gap: var(--s-3);
     margin-top: var(--s-3);
   }
+  details[open] .fields {
+    animation: panel-reveal 180ms var(--ease-out);
+  }
   .checks {
     display: flex;
     flex-direction: column;
@@ -1361,7 +1459,6 @@
     color: var(--err);
   }
   .result {
-    grid-column: 1 / 2;
     display: flex;
     flex-direction: column;
     gap: var(--s-4);
@@ -1379,14 +1476,22 @@
     flex-direction: column;
     justify-content: center;
   }
-  .details {
-    grid-column: 1 / -1;
-    display: grid;
-    grid-template-columns: minmax(0, 1fr);
+  .run-details {
+    display: flex;
+    flex-direction: column;
     gap: var(--s-4);
   }
   .run-state {
     background: color-mix(in srgb, var(--bg-1) 94%, black);
+  }
+  .run-state-head h3 {
+    font-size: var(--fs-lg);
+  }
+  .run-state-head p {
+    margin: var(--s-1) 0 0;
+    color: var(--ink-3);
+    font-size: var(--fs-sm);
+    line-height: 1.45;
   }
   .chart {
     height: 220px;
@@ -1398,15 +1503,27 @@
     align-items: center;
     gap: var(--s-2);
   }
+  .candidate-details {
+    padding: var(--s-3) var(--s-4);
+    background: color-mix(in srgb, var(--bg-1) 94%, black);
+    border: 1px solid var(--border-1);
+    border-radius: var(--r-lg);
+  }
+  .candidate-details summary {
+    min-height: 30px;
+  }
+  .candidate-details[open] summary {
+    margin-bottom: var(--s-3);
+  }
   @media (max-width: 980px) {
     .workspace {
       grid-template-columns: 1fr;
     }
     .setup-panel {
       position: static;
-    }
-    .result {
-      grid-column: 1;
+      max-height: none;
+      overflow: visible;
+      scrollbar-gutter: auto;
     }
     .stage-steps {
       grid-template-columns: repeat(3, minmax(0, 1fr));
@@ -1484,6 +1601,14 @@
       text-align: center;
       line-height: 1.25;
     }
+  }
+  @keyframes surface-enter {
+    from { opacity: 0; transform: translateY(6px); }
+    to { opacity: 1; transform: translateY(0); }
+  }
+  @keyframes panel-reveal {
+    from { opacity: 0; transform: translateY(-4px); }
+    to { opacity: 1; transform: translateY(0); }
   }
   @keyframes stage-pulse {
     0%, 100% { box-shadow: 0 0 0 4px rgba(238, 183, 124, 0.1); }
