@@ -3,8 +3,7 @@
   import Dialog from '../ui/Dialog.svelte'
   import Button from '../ui/Button.svelte'
   import { readDatasetFile } from '../../lib/io/csv'
-  import { addItems, getDatasetByTask, createDataset } from '../../lib/db/datasets'
-  import { getTask, saveTask } from '../../lib/db/tasks'
+  import { addItems, ensureTaskDataset } from '../../lib/db/datasets'
   import type { ParsedRow } from '../../lib/io/jsonl'
   import { t } from '../../stores/toast'
 
@@ -45,18 +44,17 @@
 
   async function commit() {
     if (!preview.length) return
-    let ds = await getDatasetByTask(taskId)
-    if (!ds) {
-      ds = await createDataset(taskId)
+    try {
+      const ds = await ensureTaskDataset(taskId)
+      await addItems(ds.id, preview)
+      open = false
+      file = null
+      preview = []
+      t.success($_('toast.imported'))
+      onimported?.(ds.id)
+    } catch (error) {
+      t.error(error instanceof Error ? error.message : String(error))
     }
-    await addItems(ds.id, preview)
-    const t0 = await getTask(taskId)
-    if (t0) await saveTask({ ...t0, datasetId: ds.id })
-    open = false
-    file = null
-    preview = []
-    t.success($_('toast.imported'))
-    onimported?.(ds.id)
   }
 
   function onDrop(e: DragEvent) {

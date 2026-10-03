@@ -1,59 +1,81 @@
 # Super-Prompt
 
-A browser-only, GEPA-style reflective prompt optimizer. Define a task (system prompt + rubric), give it a few examples, and the optimizer will iteratively generate prompt mutations, run them through a judge model, and keep the winners — improving your prompt one iteration at a time.
+A local-first workspace for iteratively improving a system prompt. Choose a target model and an arbiter, evaluate answers against examples, compare revisions, and keep the prompt you want to use.
 
-Everything runs client-side: tasks, datasets, and run history live in IndexedDB; the optimizer runs in a Web Worker; no server, no telemetry.
+Tasks, examples, model settings, and run history stay in your browser. Optimization runs in a Web Worker. There is no application backend or telemetry.
 
 ## Quickstart
 
+Use Node.js 24 and npm:
+
 ```bash
-pnpm install        # or npm install / yarn
-pnpm dev            # http://localhost:5173
-pnpm test           # vitest (17 tests)
-pnpm build          # production build
-pnpm preview        # serve the build locally
+npm ci
+npm run dev
+npm test
+npm run check
+npm run build
+npm run preview
 ```
 
-## Configure a provider
+Open **Improve prompt**, paste your prompt, then **Choose models** (or **Arbiter** in the steps above). **Use demo** runs the complete workflow with synthetic local responses and no API calls. Demo scores demonstrate the interface; they do not measure real prompt quality.
 
-Open **Settings** in the sidebar and fill in:
+## Configure models
 
-- **Base URL** — your OpenAI-compatible endpoint (e.g. `https://openrouter.ai/api/v1`).
-- **API key** — stored in `localStorage` in plain text. Visible to anyone with access to this browser. (This is a deliberate, user-controlled choice; there is no remote sync.)
-- **Target / Judge / Mutator models** — the model that runs the user's prompt, the model that scores it, and the model that proposes new mutations.
+- **Target:** the OpenAI-compatible base URL, API key, and model that will answer using your prompt
+- **Arbiter:** the model that scores answers and proposes revisions. Enable a separate provider to use another endpoint/key/model for this role
+- **Settings:** request deadlines, retry limits, per-model rate limits, and language
 
-The app talks to any OpenAI-compatible chat-completions endpoint. It will not work against providers that don't expose `/chat/completions` with bearer auth.
+API keys are stored in IndexedDB in plain text. Anyone with access to this browser profile can read them. Keys are sent to the provider you configure; there is no remote synchronization. Use a trusted endpoint and an appropriately limited key. Local Ollama and the built-in demo can work without a key.
 
-**CORS note:** Some providers block browser-origin requests. If "Test connection" succeeds but optimization fails, your provider may need to allow your `localhost` origin. There is nothing the app can do about this — it has no backend to proxy through.
+Unsaved provider and arbiter settings stay in this tab's memory across navigation, with retry after a storage failure and an unload warning while changes remain. Reloading or closing the tab discards those unsaved edits; only successfully saved settings are used for model requests.
 
-## How it works
+The provider must support browser CORS and OpenAI-compatible `/chat/completions`. Connection testing uses `/models`; successful model listing does not guarantee chat-completion access.
 
-1. **Task** — a system prompt, a rubric, and optional seed prompts.
-2. **Dataset** — a handful of input/expected-output pairs. The optimizer needs at least 2.
-3. **Optimize** — start a run. Each iteration:
-   - pick a parent candidate (current best),
-   - mutate it (LLM call),
-   - run both on sampled dataset items,
-   - judge pairwise (LLM call),
-   - if the child wins, it becomes the new parent.
-4. **History** — every run, every candidate, every pairwise verdict is kept.
+## Refine a prompt
+
+1. Enter the prompt and configure both model roles
+2. Add at least two examples, or let the app generate examples before the run. Manually edited examples are preserved
+3. Start refinement. The worker selects a candidate, proposes a revision, samples examples, and asks the arbiter to compare the answers in randomized order
+4. Inspect the best evaluated prompt and its evidence. Scores are judgments on sampled examples, not a guarantee of real-world quality; mutation rationale describes the proposed change rather than proving it worked
+5. Review the line-by-line changes, open the full prompt or evaluation evidence, then apply the revision or keep your current prompt. Copy and export remain available below the result
+6. Undo the last apply while that exact applied text is still current. Editing the prompt invalidates this undo so it cannot overwrite later work
+
+Pause takes effect between iterations. Stop cancels pending requests; a provider may still charge for work already started. Navigating between tabs preserves a live run. Reloading ends the worker and marks an interrupted run stopped when it is reopened.
+
+Prompt edits are saved automatically. A temporary session-storage draft protects the latest prompt during reload and is cleared after the matching IndexedDB write. A pending/failed save warns before leaving. The last apply also keeps one undo record in this tab’s session storage, including across reload; deleting a task or wiping prompt data removes these temporary copies. Other task fields in Overview use the explicit Save action.
 
 ## Architecture
 
-- **UI:** Svelte 5 (runes) + hand-rolled design tokens in `src/app.css`.
-- **Worker:** the optimization loop runs in a Web Worker (`src/worker/`). The main thread only sends start/pause/stop and receives streamed state updates.
-- **Storage:** IndexedDB via `idb`. Eight object stores (tasks, datasets, items, runs, candidates, iterations, pairs, settings).
-- **i18n:** svelte-i18n with `en` and `ru` locales. All user-visible strings go through `$_(...)`.
-- **No network analytics.** No remote logging. The only outbound calls are to your configured provider.
+- **UI:** Svelte 5, native accessible dialogs, responsive design tokens, reduced-motion support. CodeMirror loads only when an editor is needed, with a usable textarea fallback
+- **Worker:** optimization, provider calls, candidate selection, scoring, and usage tracking in `src/worker/`
+- **Storage:** IndexedDB via `idb`, schema version 1 with eight stores. This release does not migrate or clear existing data
+- **History:** 20 run rows per page; up to eight scored candidate records load on disclosure
+- **Examples:** cursor-based 10-row pages. Comparison renders 20 example choices at a time
+- **Revisions:** lossless line comparison with bounded matching work and paged rendering. Large unmatched sections use an explicitly labelled conservative comparison
+- **Language:** bundled English/Russian catalogs through the local `svelte-i18n` compatibility module
 
-## Browser support
+## Validation
 
-Tested in current Chrome, Firefox, and Safari. Requires IndexedDB, Web Workers, and ES2022. No IE / legacy Edge.
+`npm test` runs deterministic API, worker, parsing, persistence, and optimizer regressions. All provider calls in these tests are mocked.
 
-## Known limitations
+The pull-request workflow builds the exact candidate and an immutable baseline, then runs Playwright on a fresh GitHub-hosted runner. It checks desktop/mobile flows, keyboard access, reduced motion, cancellation/errors/recovery, and paired 10,000-example / 1,000-run fixtures. Reports include screenshots, traces, revision IDs, and timing/DOM metrics. See [browser acceptance methodology](tests/e2e/README.md).
 
-- DB schema is not versioned. Bumping the schema will invalidate existing data.
-- API key is stored in `localStorage` in plain text. (User's explicit choice.)
-- No streaming responses yet; tokens-in/out are reported after each call.
+For a normal development environment with Playwright Chromium installed:
 
-See `CHANGELOG.md` for what changed recently.
+```bash
+npm run build
+npm run test:e2e
+npm run test:benchmark
+```
+
+Synthetic timings are not a human usability study. Mocks prove workflow behavior, not the quality of a real model or arbiter.
+
+## Limits
+
+- Current Chrome, Firefox, or Safari with IndexedDB, Web Workers, and modern JavaScript is required; automated browser checks use Chromium
+- API responses are not streamed. Usage is counted when returned by the provider; cancelled or failed requests may incur charges without returning usage
+- Token budgets are checked between iterations, so a single iteration can exceed the remaining budget
+- Newest-first history still reads/sorts run metadata because schema version 1 has no task/date index. Dataset import/export and run preparation still process complete datasets; bounded visible pages do not make every operation constant-memory
+- Browser storage is local and may be cleared by the browser. Export important results and datasets
+
+See [CHANGELOG.md](CHANGELOG.md) for release changes.

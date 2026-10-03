@@ -1,8 +1,16 @@
 import { db } from './db'
 import type { Dataset, DatasetItem } from '../types'
 import { newId } from '../util/id'
+import { TaskNotFoundError } from './tasks'
 
 type DatasetItemInput = Omit<DatasetItem, 'id' | 'datasetId'>
+
+export class DatasetItemNotFoundError extends Error {
+  constructor(readonly itemId: string, readonly datasetId: string) {
+    super('This example was removed or replaced. Your edit was not saved.')
+    this.name = 'DatasetItemNotFoundError'
+  }
+}
 
 function plainMeta(meta: DatasetItemInput['meta']): DatasetItemInput['meta'] {
   if (!meta) return undefined
@@ -41,8 +49,51 @@ export async function createDataset(taskId: string, name = 'Default'): Promise<D
     itemCount: 0,
     createdAt: Date.now(),
   }
-  await d.put('datasets', ds)
+  // A concurrent deletion must either see this child or prevent its creation.
+  const tx = d.transaction(['tasks', 'datasets'], 'readwrite')
+  if (!await tx.objectStore('tasks').get(taskId)) {
+    await tx.done
+    throw new TaskNotFoundError(taskId)
+  }
+  await tx.objectStore('datasets').put(ds)
+  await tx.done
   return ds
+}
+
+/** Reuse the durable task link or atomically create and link its first dataset. */
+export async function ensureTaskDataset(taskId: string, name = 'Default', signal?: AbortSignal): Promise<Dataset> {
+  signal?.throwIfAborted()
+  const d = await db()
+  signal?.throwIfAborted()
+  const tx = d.transaction(['tasks', 'datasets'], 'readwrite')
+  const finished = tx.done
+  void finished.catch(() => {})
+  const abort = () => { try { tx.abort() } catch { /* Already committed. */ } }
+  signal?.addEventListener('abort', abort, { once: true })
+  try {
+    const tasks = tx.objectStore('tasks')
+    const datasets = tx.objectStore('datasets')
+    const task = await tasks.get(taskId)
+    if (!task) throw new TaskNotFoundError(taskId)
+    const existing = task.datasetId ? await datasets.get(task.datasetId) : undefined
+    signal?.throwIfAborted()
+    if (existing) {
+      await finished
+      return existing
+    }
+    const dataset: Dataset = { id: newId(), taskId, name, itemCount: 0, createdAt: Date.now() }
+    await datasets.add(dataset)
+    await tasks.put({ ...task, datasetId: dataset.id, updatedAt: Date.now() })
+    await finished
+    // Cancellation after commit cannot undo the transaction. The linked dataset
+    // remains discoverable and reusable, including any manual rows added later.
+    return dataset
+  } catch (error) {
+    abort()
+    await finished.catch(() => {})
+    if (signal?.aborted) throw signal.reason
+    throw error
+  } finally { signal?.removeEventListener('abort', abort) }
 }
 
 export async function getDataset(id: string): Promise<Dataset | undefined> {
@@ -77,7 +128,14 @@ export async function addItems(datasetId: string, items: Omit<DatasetItem, 'id' 
 
 export async function updateItem(item: DatasetItem): Promise<void> {
   const d = await db()
-  await d.put('datasets_items', toPlainDatasetItem(item))
+  const tx = d.transaction('datasets_items', 'readwrite')
+  const existing = await tx.store.get(item.id)
+  if (!existing || existing.datasetId !== item.datasetId) {
+    await tx.done
+    throw new DatasetItemNotFoundError(item.id, item.datasetId)
+  }
+  await tx.store.put(toPlainDatasetItem(item))
+  await tx.done
 }
 
 export async function deleteItem(itemId: string): Promise<void> {
@@ -101,9 +159,23 @@ export async function getItems(
   datasetId: string,
   { offset = 0, limit = 50 }: { offset?: number; limit?: number } = {}
 ): Promise<DatasetItem[]> {
+  const start = Number.isFinite(offset) ? Math.max(0, Math.floor(offset)) : 0
+  const size = Number.isFinite(limit) ? Math.max(0, Math.floor(limit)) : 50
+  if (size === 0) return []
   const d = await db()
-  const all = await d.getAllFromIndex('datasets_items', 'by-datasetId', datasetId)
-  return all.slice(offset, offset + limit)
+  const tx = d.transaction('datasets_items', 'readonly')
+  const index = tx.store.index('by-datasetId')
+  let cursor = await index.openCursor(datasetId)
+  // advance skips index entries without materializing every skipped row. The
+  // existing index orders equal dataset keys by primary key, just like getAll.
+  if (cursor && start > 0) cursor = await cursor.advance(start)
+  const items: DatasetItem[] = []
+  while (cursor && items.length < size) {
+    items.push(cursor.value)
+    if (items.length < size) cursor = await cursor.continue()
+  }
+  await tx.done
+  return items
 }
 
 export async function getAllItems(datasetId: string): Promise<DatasetItem[]> {
@@ -124,4 +196,44 @@ export async function clearDataset(datasetId: string): Promise<void> {
   const ds = await tx.objectStore('datasets').get(datasetId)
   if (ds) await tx.objectStore('datasets').put({ ...ds, itemCount: 0 })
   await tx.done
+}
+
+
+/** Replace auto-generated examples atomically; never overwrite newly added manual rows. */
+export async function replaceGeneratedItems(
+  datasetId: string,
+  items: DatasetItemInput[],
+  signal?: AbortSignal
+): Promise<boolean> {
+  signal?.throwIfAborted()
+  const d = await db()
+  signal?.throwIfAborted()
+  const tx = d.transaction(['datasets', 'datasets_items'], 'readwrite')
+  // Observe abort rejection even when a preceding request rejects first.
+  const finished = tx.done.catch((error: unknown) => { throw error })
+  void finished.catch(() => {})
+  const abort = () => { try { tx.abort() } catch { /* Already committed. */ } }
+  signal?.addEventListener('abort', abort, { once: true })
+  try {
+    const ds = await tx.objectStore('datasets').get(datasetId)
+    if (!ds) throw new Error('dataset not found')
+    const existing = await tx.objectStore('datasets_items').index('by-datasetId').getAll(datasetId)
+    signal?.throwIfAborted()
+    if (existing.some((item) => item.meta?.source !== 'generated' || item.meta?.touched === 'manual')) {
+      await finished
+      return false
+    }
+    const store = tx.objectStore('datasets_items')
+    const writes: Promise<unknown>[] = existing.map((item) => store.delete(item.id))
+    for (const item of items) writes.push(store.put({ ...toPlainDatasetItemInput(item), id: newId(), datasetId }))
+    await Promise.all(writes)
+    await tx.objectStore('datasets').put({ ...ds, itemCount: items.length })
+    await finished
+    return true
+  } catch (error) {
+    abort()
+    await finished.catch(() => {})
+    if (signal?.aborted) throw signal.reason
+    throw error
+  } finally { signal?.removeEventListener('abort', abort) }
 }

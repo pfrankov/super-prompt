@@ -18,3 +18,21 @@ describe('model routing', () => {
     expect(selection.fallback).toBe(false)
   })
 })
+
+import { isRunnableModelSetup } from '../../src/lib/improve/model-routing'
+const target = { baseUrl: 'https://target.example/v1', apiKey: 'synthetic', targetModel: 'target', judgeModel: '' }
+const arbiter = { enabled: true, baseUrl: 'https://judge.example/v1', apiKey: 'synthetic', model: 'judge' }
+it('accepts a standalone arbiter without an unused primary judge', () => {
+  expect(isRunnableModelSetup(target, arbiter)).toBe(true)
+  expect(isRunnableModelSetup(target, {...arbiter, enabled:false})).toBe(false)
+})
+it.each([
+  {baseUrl:''}, {baseUrl:'not a URL'}, {baseUrl:'file:///tmp/model'}, {apiKey:''}, {model:''},
+])('rejects an enabled but unusable arbiter route %j', (patch) => {
+  expect(isRunnableModelSetup({...target,judgeModel:'fallback'}, {...arbiter,...patch})).toBe(false)
+})
+it('accepts keyless local and demo arbiters including IPv6 localhost', () => {
+  for(const baseUrl of ['http://127.0.0.1:11434/v1','http://[::1]:11434/v1','mock://super-prompt']) {
+    expect(isRunnableModelSetup(target,{...arbiter,baseUrl,apiKey:''})).toBe(true)
+  }
+})
