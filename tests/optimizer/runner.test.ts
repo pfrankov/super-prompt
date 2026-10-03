@@ -269,8 +269,8 @@ describe('createRunner', () => {
     await runner.pause()
     await runner.resume()
 
-    expect(patchRun).toHaveBeenCalledWith('run1', { status: 'paused' })
-    expect(patchRun).toHaveBeenCalledWith('run1', { status: 'running' })
+    expect(patchRun).toHaveBeenCalledWith('run1', expect.objectContaining({ status: 'paused' }))
+    expect(patchRun).toHaveBeenCalledWith('run1', expect.objectContaining({ status: 'running' }))
   })
 
   it('fails the run when every sampled pair fails', async () => {

@@ -1,31 +1,6 @@
 import { describe, it, expect } from 'vitest'
 
-/** Extract first balanced JSON object from a string. Tolerant of prose/fences. */
-export function extractFirstJson(text: string): string | null {
-  // strip code fences
-  const cleaned = text
-    .replace(/```json\s*/gi, '')
-    .replace(/```\s*/g, '')
-    .trim()
-  const start = cleaned.indexOf('{')
-  if (start < 0) return null
-  let depth = 0
-  let inString = false
-  let escape = false
-  for (let i = start; i < cleaned.length; i++) {
-    const ch = cleaned[i]
-    if (escape) { escape = false; continue }
-    if (ch === '\\') { escape = true; continue }
-    if (ch === '"') { inString = !inString; continue }
-    if (inString) continue
-    if (ch === '{') depth++
-    else if (ch === '}') {
-      depth--
-      if (depth === 0) return cleaned.slice(start, i + 1)
-    }
-  }
-  return null
-}
+import { extractFirstJson, tryParseJson } from '../../src/lib/optimizer/extract-json'
 
 describe('extractFirstJson', () => {
   it('parses plain JSON', () => {
@@ -39,6 +14,12 @@ describe('extractFirstJson', () => {
   it('skips leading prose', () => {
     const out = extractFirstJson('Sure! Here is the JSON:\n{"a":1}')
     expect(JSON.parse(out!)).toEqual({ a: 1 })
+  })
+  it('preserves Markdown fences inside JSON string values', () => {
+    const newPrompt = 'Return a Markdown block: ```json\n{"result": true}\n```'
+    const text = JSON.stringify({ newPrompt, rationale: 'Keep ``` fences' })
+    expect(tryParseJson(text)).toEqual({ newPrompt, rationale: 'Keep ``` fences' })
+    expect(tryParseJson(`\`\`\`json\n${text}\n\`\`\``)).toEqual({ newPrompt, rationale: 'Keep ``` fences' })
   })
   it('returns null for no JSON', () => {
     expect(extractFirstJson('no json here')).toBeNull()

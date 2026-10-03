@@ -7,9 +7,19 @@
   import { createTask } from './lib/db/tasks'
   import { t } from './stores/toast'
   import { _ } from 'svelte-i18n'
+  import { settingsDraft } from './stores/settings'
 
-  // Placeholder TaskDetail — filled in Phase C/E
   import TaskDetail from './routes/TaskDetail.svelte'
+
+  $effect(() => {
+    if (!$settingsDraft) return
+    const beforeUnload = (event: BeforeUnloadEvent) => {
+      event.preventDefault()
+      event.returnValue = ''
+    }
+    window.addEventListener('beforeunload', beforeUnload)
+    return () => window.removeEventListener('beforeunload', beforeUnload)
+  })
 
   async function onCreateTask() {
     const task = await createTask({ name: '' })
@@ -23,7 +33,7 @@
     <Home {onCreateTask} />
   {:else if $route.name === 'task'}
     {#key $route.id}
-      <TaskDetail taskId={$route.id} initialTab={$route.tab ?? 'overview'} />
+      <TaskDetail taskId={$route.id} initialTab={$route.tab ?? 'improve'} />
     {/key}
   {:else if $route.name === 'settings'}
     <Settings />

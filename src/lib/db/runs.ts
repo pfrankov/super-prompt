@@ -7,9 +7,12 @@ import type {
   RunConfig,
 } from '../types'
 import { newId } from '../util/id'
+import { TaskNotFoundError } from './tasks'
 
-export async function createRun(taskId: string, config: RunConfig): Promise<Run> {
+export async function createRun(taskId: string, config: RunConfig, signal?: AbortSignal): Promise<Run> {
+  signal?.throwIfAborted()
   const d = await db()
+  signal?.throwIfAborted()
   const run: Run = {
     id: newId(),
     taskId,
@@ -23,8 +26,26 @@ export async function createRun(taskId: string, config: RunConfig): Promise<Run>
     finishedAt: null,
     errorMessage: null,
   }
-  await d.put('runs', run)
-  return run
+  // Serialize existence checking and insertion against deleteTask's cascade.
+  const tx = d.transaction(['tasks', 'runs'], 'readwrite')
+  const finished = tx.done
+  void finished.catch(() => {})
+  const abort = () => { try { tx.abort() } catch { /* Already committed. */ } }
+  signal?.addEventListener('abort', abort, { once: true })
+  try {
+    if (!await tx.objectStore('tasks').get(taskId)) throw new TaskNotFoundError(taskId)
+    signal?.throwIfAborted()
+    await tx.objectStore('runs').put(run)
+    await finished
+    // Return committed rows even if cancellation won just after commit, so the
+    // owner can persist stopped status rather than losing the row's identity.
+    return run
+  } catch (error) {
+    abort()
+    await finished.catch(() => {})
+    if (signal?.aborted) throw signal.reason
+    throw error
+  } finally { signal?.removeEventListener('abort', abort) }
 }
 
 export async function getRun(id: string): Promise<Run | undefined> {
@@ -34,15 +55,36 @@ export async function getRun(id: string): Promise<Run | undefined> {
 
 export async function patchRun(id: string, patch: Partial<Run>): Promise<void> {
   const d = await db()
-  const r = await d.get('runs', id)
-  if (!r) return
-  await d.put('runs', { ...r, ...patch })
+  const tx = d.transaction('runs', 'readwrite')
+  const r = await tx.store.get(id)
+  if (r) await tx.store.put({ ...r, ...patch })
+  await tx.done
 }
 
 export async function listRuns(taskId: string): Promise<Run[]> {
   const d = await db()
   const all = await d.getAllFromIndex('runs', 'by-taskId', taskId)
   return all.sort((a, b) => b.startedAt - a.startedAt)
+}
+
+export interface RunPage {
+  runs: Run[]
+  total: number
+}
+
+/**
+ * Page run metadata independently of the (much larger) candidate records.
+ * Version 1 has no task/date index, so newest-first sorting still needs all
+ * metadata for this task. Candidate bodies are never read by this query.
+ */
+export async function listRunsPage(
+  taskId: string,
+  { offset = 0, limit = 20 }: { offset?: number; limit?: number } = {}
+): Promise<RunPage> {
+  const start = Number.isFinite(offset) ? Math.max(0, Math.floor(offset)) : 0
+  const size = Number.isFinite(limit) ? Math.max(0, Math.floor(limit)) : 20
+  const runs = await listRuns(taskId)
+  return { runs: runs.slice(start, start + size), total: runs.length }
 }
 
 export async function addCandidate(c: PromptCandidate): Promise<void> {
@@ -59,6 +101,26 @@ export async function getCandidates(runId: string): Promise<PromptCandidate[]> {
   const d = await db()
   const all = await d.getAllFromIndex('candidates', 'by-runId', runId)
   return all.sort((a, b) => a.createdAt - b.createdAt)
+}
+
+/** Only scored candidates have valid keys in the existing score index. */
+export async function getTopCandidates(
+  runId: string,
+  { limit = 8 }: { limit?: number } = {}
+): Promise<PromptCandidate[]> {
+  const size = Number.isFinite(limit) ? Math.max(0, Math.floor(limit)) : 8
+  if (size === 0) return []
+  const d = await db()
+  const tx = d.transaction('candidates', 'readonly')
+  const range = IDBKeyRange.bound([runId, -Infinity], [runId, Infinity])
+  let cursor = await tx.store.index('by-runId-score').openCursor(range, 'prev')
+  const candidates: PromptCandidate[] = []
+  while (cursor && candidates.length < size) {
+    candidates.push(cursor.value)
+    if (candidates.length < size) cursor = await cursor.continue()
+  }
+  await tx.done
+  return candidates
 }
 
 export async function addIteration(it: IterationRecord, pairs: PairwiseResult[]): Promise<void> {

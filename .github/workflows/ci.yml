@@ -1,0 +1,80 @@
+name: Verify prompt workspace
+
+on:
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: prompt-workspace-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    env:
+      CI: 'true'
+      E2E_BASELINE_SHA: ffef3357decd6ea300b2dd26443dacab4ff5e804
+      E2E_BASELINE_URL: http://127.0.0.1:4174
+      E2E_READER_BASELINE_SHA: 17ab945e7496cfb1357196fa97111ce701cbbe8e
+      E2E_READER_BASELINE_URL: http://127.0.0.1:4175
+    steps:
+      - name: Check out exact candidate
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          persist-credentials: false
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: npm
+      - name: Install locked candidate dependencies
+        run: npm ci
+      - name: Type and component checks
+        run: npm run check && npx tsc -p tests/e2e/tsconfig.json
+      - name: Unit and integration tests
+        run: npm test
+      - name: Build exact candidate
+        run: npm run build
+      - name: Check out immutable comparison baseline
+        uses: actions/checkout@v4
+        with:
+          ref: ffef3357decd6ea300b2dd26443dacab4ff5e804
+          path: .benchmark-baseline
+          persist-credentials: false
+      - name: Install and build immutable baseline
+        working-directory: .benchmark-baseline
+        run: npm ci && npm run build
+      - name: Check out immutable reader comparison
+        uses: actions/checkout@v4
+        with:
+          ref: 17ab945e7496cfb1357196fa97111ce701cbbe8e
+          path: .reader-baseline
+          persist-credentials: false
+      - name: Install and build immutable reader comparison
+        working-directory: .reader-baseline
+        run: npm ci && npm run build
+      - name: Install test browser in fresh hosted runner
+        run: npx playwright install --with-deps chromium
+      - name: Record revision identity
+        run: |
+          echo "E2E_CANDIDATE_SHA=$(git rev-parse HEAD)" >> "$GITHUB_ENV"
+          mkdir -p evidence
+          printf 'candidate=%s\nbaseline=%s\nreader_baseline=%s\nrunner=%s\n' "$(git rev-parse HEAD)" "$(git -C .benchmark-baseline rev-parse HEAD)" "$(git -C .reader-baseline rev-parse HEAD)" "$RUNNER_OS" > evidence/revisions.txt
+      - name: Functional browsers and paired production benchmark
+        run: npx playwright test
+      - name: Save browser evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: prompt-workspace-evidence-${{ github.event.pull_request.head.sha || github.sha }}
+          path: |
+            playwright-report/
+            test-results/
+            evidence/
+          retention-days: 14
+          if-no-files-found: warn

@@ -7,7 +7,8 @@ export type MainToWorker =
   | { type: 'PAUSE'; payload?: { runId?: string } }
   | { type: 'RESUME'; payload?: { runId?: string } }
   | { type: 'STOP'; payload?: { runId?: string } }
-  | { type: 'COMPARE_AB'; payload: { taskId: string; promptA: string; promptB: string; itemIds: string[]; config: RunConfig } }
+  | { type: 'COMPARE_AB'; payload: { requestId: number; taskId: string; promptA: string; promptB: string; itemIds: string[]; config: RunConfig } }
+  | { type: 'CANCEL_COMPARE' }
   | { type: 'GET_STATE' }
   | { type: 'UPDATE_SETTINGS'; payload: { provider: ProviderConfig; arbitrator?: ArbitratorConfig; config: RunConfig } }
 
@@ -16,7 +17,8 @@ export type WorkerToMain =
   | { type: 'STAGE'; stage: RunStage }
   | { type: 'PROGRESS'; progress: { iter: number; bestScore: number; tokensIn: number; tokensOut: number; etaMs: number } }
   | { type: 'LOG'; entry: { ts: number; level: 'info' | 'warn' | 'error'; msg: string } }
-  | { type: 'COMPARE_RESULT'; results: CompareResult }
-  | { type: 'COMPARE_ERROR'; message: string; stack?: string }
+  | { type: 'COMPARE_RESULT'; requestId: number; results: CompareResult }
+  | { type: 'COMPARE_ERROR'; requestId: number; message: string; stack?: string }
+  | { type: 'CONTROL_ERROR'; runId: string; message: string; stack?: string }
   | { type: 'ERROR'; message: string; stack?: string }
   | { type: 'DONE'; finalCandidateId: string | null }
