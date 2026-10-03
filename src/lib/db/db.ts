@@ -99,4 +99,10 @@ export async function wipeAll(): Promise<void> {
       (s) => d.clear(s)
     )
   )
+  try {
+    for (let i = sessionStorage.length - 1; i >= 0; i--) {
+      const key = sessionStorage.key(i)
+      if (key?.startsWith('sp.prompt-draft.') || key?.startsWith('sp.applied-revision.')) sessionStorage.removeItem(key)
+    }
+  } catch { /* Session storage can be unavailable in restricted browser contexts. */ }
 }

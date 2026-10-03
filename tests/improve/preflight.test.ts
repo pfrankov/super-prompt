@@ -1,5 +1,8 @@
-import { describe, expect, it, vi } from 'vitest'
-import { nextPreflightAction, preflightReady, runPreflight, type PreflightStep } from '../../src/lib/improve/preflight'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+import { clearModelRateLimits } from '../../src/lib/api/modelRateLimit'
+import * as openai from '../../src/lib/api/openaiLike'
+import { nextPreflightAction, preflightReady, runPreflight, type PreflightStep, type RunPreflightArgs } from '../../src/lib/improve/preflight'
+import { runJudge } from '../../src/lib/optimizer/judge'
 
 describe('preflight status mapping', () => {
   it('is ready when there are no failing steps', () => {
@@ -80,5 +83,121 @@ describe('preflight status mapping', () => {
     expect(result.ready).toBe(true)
     expect(fetchMock).toHaveBeenCalledTimes(3)
     expect(fetchMock.mock.calls.every(([url]) => String(url).endsWith('/chat/completions'))).toBe(true)
+  })
+})
+
+describe('preflight cancellation', () => {
+  const args: RunPreflightArgs = {
+    provider: {
+      id: 'p', label: 'Provider', baseUrl: 'https://provider.test/v1', apiKey: 'test-key',
+      targetModel: 'target', judgeModel: 'judge', requestTimeoutMs: 2000, maxRetries: 0,
+    },
+    task: {
+      id: 't', name: 'Task', description: 'Test task', initialPrompt: 'Answer briefly', seedPrompts: [],
+      rubric: { text: 'Return useful answers' }, datasetId: 'd', providerId: null, createdAt: 0, updatedAt: 0,
+    },
+    items: [],
+  }
+
+  beforeEach(() => {
+    vi.useFakeTimers()
+    clearModelRateLimits()
+    vi.stubGlobal('fetch', vi.fn())
+  })
+  afterEach(() => {
+    clearModelRateLimits()
+    vi.clearAllTimers()
+    vi.useRealTimers()
+    vi.unstubAllGlobals()
+  })
+
+  it('rejects before checking an already-cancelled run', async () => {
+    const controller = new AbortController()
+    controller.abort()
+    const result = runPreflight({ ...args, signal: controller.signal }).catch((error: unknown) => error)
+    await vi.dynamicImportSettled()
+    await vi.advanceTimersByTimeAsync(5000)
+    expect(await result).toBe(controller.signal.reason)
+    expect(fetch).not.toHaveBeenCalled()
+  })
+
+  it.each([1, 2, 3])('propagates cancellation in stage %i without advancing', async (stage) => {
+    const controller = new AbortController()
+    const responses = ['ok', JSON.stringify({ winner: 'A', scoreA: 8, scoreB: 4 }), JSON.stringify({ newPrompt: 'Better prompt' })]
+    vi.mocked(fetch).mockImplementation(async (_url, init) => {
+      const index = vi.mocked(fetch).mock.calls.length - 1
+      if (index + 1 === stage) {
+        return new Promise<Response>((_resolve, reject) => {
+          const signal = init!.signal!
+          if (signal.aborted) reject(signal.reason)
+          else signal.addEventListener('abort', () => reject(signal.reason), { once: true })
+        })
+      }
+      return new Response(JSON.stringify({ choices: [{ message: { content: responses[index] } }] }))
+    })
+    let outcome: unknown
+    void runPreflight({ ...args, signal: controller.signal }).then(
+      (result) => { outcome = result },
+      (error: unknown) => { outcome = error },
+    )
+    await vi.dynamicImportSettled()
+    await vi.advanceTimersByTimeAsync((stage - 1) * 500)
+    expect(fetch).toHaveBeenCalledTimes(stage)
+    controller.abort(new Error('Cancel preflight'))
+    await vi.advanceTimersByTimeAsync(0)
+    expect(outcome).toBe(controller.signal.reason)
+    await vi.advanceTimersByTimeAsync(5000)
+    expect(fetch).toHaveBeenCalledTimes(stage)
+  })
+})
+
+describe('preflight and runtime judge contract', () => {
+  const args: RunPreflightArgs = {
+    provider: {
+      id: 'p', label: 'Provider', baseUrl: 'https://provider.test/v1', apiKey: 'test-key',
+      targetModel: 'target', judgeModel: 'judge', requestTimeoutMs: 2000, maxRetries: 0,
+    },
+    task: {
+      id: 't', name: 'Task', description: 'Test task', initialPrompt: 'Answer briefly', seedPrompts: [],
+      rubric: { text: 'Return useful answers' }, datasetId: 'd', providerId: null, createdAt: 0, updatedAt: 0,
+    },
+    items: [],
+  }
+
+  afterEach(() => vi.restoreAllMocks())
+
+  it.each([
+    { label: 'A', content: '{"winner":"A","scoreA":8,"scoreB":4}', winner: 'A' },
+    { label: 'B', content: '{"winner":"B","scoreA":4,"scoreB":8}', winner: 'B' },
+    { label: 'tie', content: '{"winner":"tie","scoreA":5,"scoreB":5}', winner: 'tie' },
+    { label: 'case-normalized winner', content: '{"winner":"a","scoreA":8,"scoreB":4}', winner: 'A' },
+    { label: 'uppercase tie', content: '{"winner":"TIE","scoreA":5,"scoreB":5}', winner: 'tie' },
+    { label: 'missing winner', content: '{"scoreA":8,"scoreB":4}', winner: null },
+    { label: 'unsupported winner', content: '{"winner":"DRAW","scoreA":8,"scoreB":4}', winner: null },
+    { label: 'null winner', content: '{"winner":null,"scoreA":8,"scoreB":4}', winner: null },
+    { label: 'empty winner', content: '{"winner":"","scoreA":8,"scoreB":4}', winner: null },
+    { label: 'non-finite score', content: '{"winner":"A","scoreA":1e999,"scoreB":4}', winner: null },
+    { label: 'non-numeric score', content: '{"winner":"A","scoreA":"8","scoreB":4}', winner: null },
+  ])('agrees with the runtime for $label', async ({ content, winner }) => {
+    vi.spyOn(openai, 'chatCompletionWithRetry').mockImplementation(async (request) => {
+      const system = request.messages.find((message) => message.role === 'system')?.content ?? ''
+      const text = /impartial expert judge/i.test(system)
+        ? content
+        : /meticulous prompt engineer/i.test(system)
+          ? JSON.stringify({ newPrompt: 'Improved prompt' })
+          : 'ok'
+      return { text, model: request.model, usage: { promptTokens: 0, completionTokens: 0, totalTokens: 0 }, raw: {} }
+    })
+
+    const preflight = await runPreflight(args)
+    const runtime = await runJudge({
+      provider: args.provider, taskDescription: args.task.description, rubric: args.task.rubric.text,
+      input: 'Hello', outputA: 'Hi', outputB: 'Bye', temperature: 0,
+    })
+
+    expect(runtime.errorMessage).toBe(winner ? undefined : 'judge_parse_failed')
+    if (winner) expect(runtime.verdict.winner).toBe(winner)
+    expect(preflight.steps.find((step) => step.key === 'judgeJson')?.status).toBe(winner ? 'ok' : 'fail')
+    expect(preflight.ready).toBe(winner !== null)
   })
 })

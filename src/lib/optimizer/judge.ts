@@ -4,6 +4,7 @@ import { judgeSystemPrompt } from './prompts/judgeSystem'
 import { tryParseJson } from './extract-json'
 
 export interface JudgeArgs {
+  signal?: AbortSignal
   provider: ProviderConfig
   arbitrator?: ArbitratorConfig
   taskDescription: string
@@ -20,13 +21,32 @@ export interface JudgeResult {
   tokensIn: number
   tokensOut: number
   latencyMs: number
+  errorMessage?: string
 }
 
-function coerceWinner(v: unknown): Winner {
+function coerceWinner(v: unknown): Winner | null {
   const x = String(v ?? '').toUpperCase()
   if (x === 'A') return 'A'
   if (x === 'B') return 'B'
-  return 'tie'
+  if (x === 'TIE') return 'tie'
+  return null
+}
+
+/** Shared response contract for the runtime judge and its preflight check. */
+export function parseJudgeVerdict(text: string): JudgeVerdict | null {
+  const parsed = tryParseJson<Record<string, unknown>>(text)
+  const winner = coerceWinner(parsed?.winner)
+  if (!parsed || !winner || typeof parsed.scoreA !== 'number' || typeof parsed.scoreB !== 'number' || !Number.isFinite(parsed.scoreA) || !Number.isFinite(parsed.scoreB)) {
+    return null
+  }
+  return {
+    winner,
+    scoreA: clampScore(parsed.scoreA),
+    scoreB: clampScore(parsed.scoreB),
+    reasoning: typeof parsed.reasoning === 'string' ? parsed.reasoning : '',
+    feedbackA: typeof parsed.feedbackA === 'string' ? parsed.feedbackA : '',
+    feedbackB: typeof parsed.feedbackB === 'string' ? parsed.feedbackB : '',
+  }
 }
 
 /** Pick the route (URL/key/model) the judge should call. Arbitrator wins when
@@ -75,6 +95,7 @@ export async function runJudge(args: JudgeArgs, onLog?: (m: string, level: 'info
     baseUrl: route.baseUrl,
     apiKey: route.apiKey,
     model: route.model,
+    signal: args.signal,
     messages: [
       { role: 'system', content: judgeSystemPrompt },
       { role: 'user', content: userMsg },
@@ -85,8 +106,8 @@ export async function runJudge(args: JudgeArgs, onLog?: (m: string, level: 'info
     rateLimits: args.provider.modelRateLimits,
   }, args.provider.maxRetries)
 
-  const parsed = tryParseJson<Record<string, unknown>>(resp.text)
-  if (!parsed || typeof parsed.scoreA !== 'number' || typeof parsed.scoreB !== 'number') {
+  const verdict = parseJudgeVerdict(resp.text)
+  if (!verdict) {
     onLog?.('judge_parse_failed', 'warn')
     return {
       verdict: {
@@ -100,18 +121,12 @@ export async function runJudge(args: JudgeArgs, onLog?: (m: string, level: 'info
       tokensIn: resp.usage.promptTokens,
       tokensOut: resp.usage.completionTokens,
       latencyMs: Date.now() - t0,
+      errorMessage: 'judge_parse_failed',
     }
   }
 
   return {
-    verdict: {
-      winner: coerceWinner(parsed.winner),
-      scoreA: clampScore(parsed.scoreA),
-      scoreB: clampScore(parsed.scoreB),
-      reasoning: typeof parsed.reasoning === 'string' ? parsed.reasoning : '',
-      feedbackA: typeof parsed.feedbackA === 'string' ? parsed.feedbackA : '',
-      feedbackB: typeof parsed.feedbackB === 'string' ? parsed.feedbackB : '',
-    },
+    verdict,
     tokensIn: resp.usage.promptTokens,
     tokensOut: resp.usage.completionTokens,
     latencyMs: Date.now() - t0,

@@ -1,18 +1,21 @@
 <script lang="ts">
   import { _ } from 'svelte-i18n'
+  import { onMount, untrack } from 'svelte'
   import type { Task } from '../../lib/types'
   import TextField from '../ui/TextField.svelte'
   import TextArea from '../ui/TextArea.svelte'
   import PromptEditor from '../ui/PromptEditor.svelte'
   import Button from '../ui/Button.svelte'
   import Tag from '../ui/Tag.svelte'
-  import { saveTask } from '../../lib/db/tasks'
+  import { patchTask, type TaskPatch } from '../../lib/db/tasks'
+  import { readPromptDraft, stagePromptDraft } from '../../lib/db/prompt-drafts'
   import { t } from '../../stores/toast'
 
   let { task = $bindable() as Task }: { task: Task } = $props()
   let saving = $state(false)
   let dirty = $state(false)
   let initial = $state<string>('')
+  let recoveredPrompt = $state(untrack(() => readPromptDraft(task.id)))
 
   let newSeed = $state('')
 
@@ -27,15 +30,13 @@
     if (task.id !== lastTaskId) {
       lastTaskId = task.id
       initial = snapshot(task)
-      dirty = false
-    } else if (initial) {
-      dirty = snapshot(task) !== initial
     }
+    dirty = recoveredPrompt !== null || !!initial && snapshot(task) !== initial
   })
 
   $effect(() => {
     const onBeforeUnload = (e: BeforeUnloadEvent) => {
-      if (dirty) {
+      if (dirty || saving || readPromptDraft(task.id) !== null) {
         e.preventDefault()
         e.returnValue = ''
       }
@@ -44,17 +45,44 @@
     return () => window.removeEventListener('beforeunload', onBeforeUnload)
   })
 
+  onMount(() => {
+    recoveredPrompt = readPromptDraft(task.id)
+    if (recoveredPrompt !== null) {
+      task = { ...task, initialPrompt: recoveredPrompt }
+      const id = task.id
+      const prompt = recoveredPrompt
+      void patchTask(id, { initialPrompt: prompt }).then(() => {
+        if (recoveredPrompt === prompt) recoveredPrompt = null
+      }, (error) => { t.error(error instanceof Error ? error.message : String(error)) })
+    }
+  })
+
   async function save() {
+    if (saving) return
     saving = true
     try {
       const snap = $state.snapshot(task)
-      await saveTask(snap)
+      const baseline = JSON.parse(initial || snapshot(snap)) as TaskPatch
+      const patch: TaskPatch = {}
+      for (const key of ['name', 'description', 'initialPrompt', 'seedPrompts', 'rubric'] as const) {
+        if (JSON.stringify(snap[key]) !== JSON.stringify(baseline[key])) Object.assign(patch, { [key]: snap[key] })
+      }
+      if (recoveredPrompt !== null) patch.initialPrompt = snap.initialPrompt
+      await patchTask(snap.id, patch)
+      recoveredPrompt = null
       initial = snapshot(snap)
-      dirty = false
       t.success($_('actions.saved'))
+    } catch (error) {
+      t.error(error instanceof Error ? error.message : String(error))
     } finally {
       saving = false
     }
+  }
+
+  function onPromptInput(value: string) {
+    recoveredPrompt = value
+    try { stagePromptDraft(task.id, value) }
+    catch (error) { t.error(error instanceof Error ? error.message : String(error)) }
   }
 
   function addSeed() {
@@ -76,7 +104,7 @@
     placeholder={$_('task.descriptionPlaceholder')}
     rows={3}
   />
-  <PromptEditor bind:value={task.initialPrompt} label={$_('task.initialPrompt')} placeholder={$_('task.initialPromptPlaceholder')} rows={8} />
+  <PromptEditor bind:value={task.initialPrompt} label={$_('task.initialPrompt')} placeholder={$_('task.initialPromptPlaceholder')} rows={8} oninput={onPromptInput} />
 
   <div class="seeds">
     <span class="lbl">{$_('task.seedPrompts')}</span>

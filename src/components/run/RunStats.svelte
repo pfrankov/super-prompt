@@ -65,7 +65,7 @@
   .grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(160px, 1fr)); gap: var(--s-3); }
   .stat {
     display: flex; flex-direction: column; gap: 2px;
-    background: color-mix(in srgb, var(--bg-2) 64%, black); border: 1px solid var(--border-1);
+    background: var(--bg-1); border: 1px solid var(--border-1);
     border-radius: var(--r-md); padding: var(--s-3) var(--s-4);
   }
   .lbl { font-size: var(--fs-xs); color: var(--ink-3); text-transform: uppercase; letter-spacing: 0.06em; }
