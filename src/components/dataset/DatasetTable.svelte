@@ -26,6 +26,7 @@
   let offset = $state(0)
   let localDataset: Dataset | null = $state(null)
   const pageSize = 10
+  const saveQueues = new Map<string, Promise<void>>()
 
   let newInput = $state('')
   let newExpected = $state('')
@@ -98,15 +99,20 @@
     }
     items = items.map((row) => row.id === it.id ? next : row)
     pendingSave = new Set([...pendingSave, it.id])
+    const previous = saveQueues.get(it.id) ?? Promise.resolve()
+    const write = previous.catch(() => {}).then(() => updateItem(next))
+    saveQueues.set(it.id, write)
     try {
-      await updateItem(next)
+      await write
     } catch (e) {
       t.error(String(e))
     } finally {
-      const next = new Set(pendingSave)
-      next.delete(it.id)
-      pendingSave = next
-      onchanged?.()
+      if (saveQueues.get(it.id) === write) {
+        saveQueues.delete(it.id)
+        const remaining = new Set(pendingSave)
+        remaining.delete(it.id)
+        pendingSave = remaining
+      }
     }
   }
 </script>
@@ -138,20 +144,22 @@
           {#each items as it, i (it.id)}
             <tr>
               <td class="num dim">{offset + i + 1}</td>
-              <td>
+              <td data-label={$_('dataset.input')}>
                 <textarea
                   class="cell-input"
                   class:busy={pendingSave.has(it.id)}
                   rows="2"
+                  aria-label={`${$_('dataset.input')} ${offset + i + 1}`}
                   value={it.input}
                   oninput={(e) => edit(it, 'input', (e.currentTarget as HTMLTextAreaElement).value)}
                 ></textarea>
               </td>
-              <td>
+              <td data-label={$_('dataset.expected')}>
                 <textarea
                   class="cell-input"
                   class:busy={pendingSave.has(it.id)}
                   rows="2"
+                  aria-label={`${$_('dataset.expected')} ${offset + i + 1}`}
                   value={it.expectedOutput ?? ''}
                   oninput={(e) => edit(it, 'expectedOutput', (e.currentTarget as HTMLTextAreaElement).value)}
                 ></textarea>
@@ -181,9 +189,9 @@
 
     {#if total > pageSize}
       <div class="pager">
-        <Button size="sm" variant="ghost" disabled={offset === 0} onclick={() => { offset = Math.max(0, offset - pageSize); reload() }}>{'<'}</Button>
+        <Button size="sm" variant="ghost" aria-label={$_('common.back')} disabled={offset === 0} onclick={() => { offset = Math.max(0, offset - pageSize); reload() }}>{'<'}</Button>
         <span class="dim numeric">{offset + 1}-{Math.min(offset + pageSize, total)} / {total}</span>
-        <Button size="sm" variant="ghost" disabled={offset + pageSize >= total} onclick={() => { offset += pageSize; reload() }}>{'>'}</Button>
+        <Button size="sm" variant="ghost" aria-label={$_('common.next')} disabled={offset + pageSize >= total} onclick={() => { offset += pageSize; reload() }}>{'>'}</Button>
       </div>
     {/if}
   {/if}
@@ -222,7 +230,7 @@
     overflow-x: auto;
     border: 1px solid var(--border-1);
     border-radius: var(--r-lg);
-    background: color-mix(in srgb, var(--bg-1) 92%, black);
+    background: var(--bg-1);
     box-shadow: var(--shadow-1);
   }
   table { width: 100%; border-collapse: separate; border-spacing: 0; }
@@ -238,7 +246,7 @@
     color: var(--ink-3);
     border-bottom: 1px solid var(--border-1);
     padding: 11px var(--s-3);
-    background: color-mix(in srgb, var(--bg-2) 82%, black);
+    background: var(--bg-1);
   }
   tbody td { border-bottom: 1px solid rgba(241, 238, 231, 0.055); }
   tbody tr:last-child td { border-bottom: none; }
@@ -252,8 +260,8 @@
   .cell-input {
     width: 100%;
     min-width: 140px;
-    min-height: 36px;
-    height: 36px;
+    min-height: 56px;
+    height: 56px;
     background: transparent;
     border: 1px solid transparent;
     padding: 7px 9px 6px;
@@ -264,7 +272,7 @@
     resize: none;
     font-family: var(--font-mono);
     line-height: 1.4;
-    overflow: hidden;
+    overflow: auto;
     transition:
       background-color var(--dur-fast) var(--ease),
       border-color var(--dur-fast) var(--ease),
@@ -272,13 +280,11 @@
   }
   .cell-input:hover { border-color: var(--border-1); background: rgba(241, 238, 231, 0.025); }
   .cell-input:focus {
-    height: auto;
-    min-height: 56px;
     overflow: auto;
     outline: none;
-    border-color: rgba(238, 183, 124, 0.55);
+    border-color: var(--secondary);
     background: var(--bg-2);
-    box-shadow: 0 0 0 3px rgba(238, 183, 124, 0.1);
+    box-shadow: 0 0 0 3px color-mix(in srgb, var(--secondary) 12%, transparent);
   }
   .actions-cell { width: 36px; text-align: right; }
   .row-del {
@@ -307,7 +313,7 @@
     gap: var(--s-2);
     padding: var(--s-3);
     margin-top: var(--s-2);
-    background: color-mix(in srgb, var(--bg-1) 88%, black);
+    background: var(--bg-1);
   }
   .add-input {
     background: var(--bg-2);
@@ -321,12 +327,22 @@
     resize: vertical;
     min-height: 58px;
   }
-  .add-input:focus { outline: none; border-color: rgba(238, 183, 124, 0.55); box-shadow: 0 0 0 3px rgba(238, 183, 124, 0.1); }
+  .add-input:focus { outline: none; border-color: var(--secondary); box-shadow: 0 0 0 3px color-mix(in srgb, var(--secondary) 12%, transparent); }
   .add-action { display: flex; align-items: flex-end; }
   @media (max-width: 760px) {
     .add { grid-template-columns: 1fr; }
     .add-action { align-items: stretch; }
     .add-action :global(.btn) { width: 100%; }
     th, td { padding: var(--s-2); }
+  }
+  @media (max-width: 600px) {
+    table, tbody, tbody tr, tbody td { display: block; width: 100%; }
+    thead { display: none; }
+    tbody tr { position: relative; padding: 12px 36px 12px 28px; border-bottom: 1px solid var(--border-1); }
+    tbody td { padding: 0; border: 0; }
+    tbody td.num { position: absolute; left: 7px; top: 15px; width: auto; }
+    tbody td.actions-cell { position: absolute; right: 3px; top: 10px; width: 32px; }
+    td[data-label]::before { content: attr(data-label); display: block; color: var(--ink-3); font-size: 11px; margin: 4px 8px; }
+    .cell-input, .cell-input:focus { min-width: 0; height: 88px; min-height: 88px; line-height: 1.5; overflow: auto; resize: vertical; border-color: var(--border-1); background: var(--bg-0); }
   }
 </style>

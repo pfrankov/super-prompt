@@ -1,9 +1,6 @@
 /** Extract first balanced JSON object from a string. Tolerant of prose and code fences. */
 export function extractFirstJson(text: string): string | null {
-  const cleaned = text
-    .replace(/```json\s*/gi, '')
-    .replace(/```\s*/g, '')
-    .trim()
+  const cleaned = text.trim()
   const start = cleaned.indexOf('{')
   if (start < 0) return null
   let depth = 0

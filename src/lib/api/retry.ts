@@ -1,4 +1,5 @@
 import { ApiError } from './errors'
+import { abortableDelay } from './abort'
 
 export interface BackoffOptions {
   maxRetries: number
@@ -6,9 +7,8 @@ export interface BackoffOptions {
   capMs: number
   jitter?: 'full' | 'none'
   onRetry?: (info: { attempt: number; delayMs: number; error: ApiError }) => void
+  signal?: AbortSignal
 }
-
-const sleep = (ms: number) => new Promise<void>((r) => setTimeout(r, ms))
 
 /**
  * Retry an async function with exponential backoff + jitter.
@@ -17,12 +17,17 @@ const sleep = (ms: number) => new Promise<void>((r) => setTimeout(r, ms))
  * Honors `Retry-After` header if present on ApiError.
  */
 export async function withBackoff<T>(fn: () => Promise<T>, opts: BackoffOptions): Promise<T> {
-  const { maxRetries, baseMs, capMs, jitter = 'full', onRetry } = opts
+  const { maxRetries, baseMs, capMs, jitter = 'full', onRetry, signal } = opts
   let attempt = 0
   for (;;) {
+    signal?.throwIfAborted()
     try {
-      return await fn()
+      const result = await fn()
+      signal?.throwIfAborted()
+      return result
     } catch (e) {
+      // An abort reason can itself be a TypeError or a retriable ApiError.
+      signal?.throwIfAborted()
       const isApi = e instanceof ApiError
       const isNetwork = e instanceof TypeError
       if (!isApi && !isNetwork) throw e
@@ -39,7 +44,7 @@ export async function withBackoff<T>(fn: () => Promise<T>, opts: BackoffOptions)
       attempt++
       if (isApi) e.retried = attempt
       onRetry?.({ attempt, delayMs: delay, error: isApi ? e : new ApiError({ status: 0, cause: e }) })
-      await sleep(delay)
+      await abortableDelay(delay, signal)
     }
   }
 }
