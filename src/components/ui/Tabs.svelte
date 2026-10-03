@@ -1,5 +1,5 @@
 <script lang="ts">
-  import type { Snippet } from 'svelte'
+  import { tick } from 'svelte'
 
   let {
     tabs,
@@ -13,7 +13,7 @@
 
   let tablistEl: HTMLDivElement | null = $state(null)
 
-  function onKey(e: KeyboardEvent) {
+  async function onKey(e: KeyboardEvent) {
     const i = tabs.findIndex((t) => t.value === active)
     if (i < 0) return
     if (e.key === 'ArrowRight') {
@@ -21,20 +21,26 @@
       const next = tabs[(i + 1) % tabs.length]
       active = next.value
       onchange?.(next.value)
+      await tick()
+      tablistEl?.querySelector<HTMLButtonElement>('[aria-selected="true"]')?.focus()
     } else if (e.key === 'ArrowLeft') {
       e.preventDefault()
       const prev = tabs[(i - 1 + tabs.length) % tabs.length]
       active = prev.value
       onchange?.(prev.value)
+      await tick()
+      tablistEl?.querySelector<HTMLButtonElement>('[aria-selected="true"]')?.focus()
     }
   }
 </script>
 
-<div class="tabs" role="tablist" tabindex="0" bind:this={tablistEl} onkeydown={onKey}>
+<div class="tabs" role="tablist" tabindex="-1" bind:this={tablistEl} onkeydown={onKey}>
   {#each tabs as t (t.value)}
     <button
       type="button"
       role="tab"
+      id={`tab-${t.value}`}
+      aria-controls="task-panel"
       aria-selected={active === t.value}
       tabindex={active === t.value ? 0 : -1}
       class="tab"

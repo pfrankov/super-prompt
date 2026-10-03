@@ -71,6 +71,7 @@ function parseMutatorJson(text: string): boolean {
 }
 
 export async function runPreflight(args: RunPreflightArgs): Promise<PreflightResult> {
+  args.signal?.throwIfAborted()
   const steps: PreflightStep[] = []
 
   if (!isRunnableProvider(args.provider)) {
@@ -95,12 +96,14 @@ export async function runPreflight(args: RunPreflightArgs): Promise<PreflightRes
       signal: args.signal,
       rateLimits: args.provider.modelRateLimits,
     }, args.provider.maxRetries)
+    args.signal?.throwIfAborted()
     if (target.text.trim()) {
       steps.push(ok('target', 'Target model returned a non-empty answer.'))
     } else {
       steps.push(fail('target', 'Target model returned empty content.', 'Choose another target model or increase the model output limit.'))
     }
   } catch (e) {
+    args.signal?.throwIfAborted()
     steps.push(fail('target', e instanceof Error ? e.message : 'Target model failed.', 'Choose a reachable target model.'))
   }
 
@@ -138,12 +141,14 @@ export async function runPreflight(args: RunPreflightArgs): Promise<PreflightRes
       signal: args.signal,
       rateLimits: args.provider.modelRateLimits,
     }, args.provider.maxRetries)
+    args.signal?.throwIfAborted()
     if (parseJudgeJson(judge.text)) {
       steps.push(ok('judgeJson', 'Judge returns parseable JSON.'))
     } else {
       steps.push(fail('judgeJson', 'Judge did not return parseable scores.', 'Use a JSON-stable judge model.'))
     }
   } catch (e) {
+    args.signal?.throwIfAborted()
     steps.push(fail('judgeJson', e instanceof Error ? e.message : 'Judge check failed.', 'Use a reachable judge model.'))
   }
 
@@ -180,12 +185,14 @@ export async function runPreflight(args: RunPreflightArgs): Promise<PreflightRes
       signal: args.signal,
       rateLimits: args.provider.modelRateLimits,
     }, args.provider.maxRetries)
+    args.signal?.throwIfAborted()
     if (parseMutatorJson(mutator.text)) {
       steps.push(ok('mutatorJson', 'Mutator returns parseable JSON.'))
     } else {
       steps.push(fail('mutatorJson', 'Mutator did not return a newPrompt JSON field.', 'Use the same JSON-stable model for judge and mutator.'))
     }
   } catch (e) {
+    args.signal?.throwIfAborted()
     steps.push(fail('mutatorJson', e instanceof Error ? e.message : 'Mutator check failed.', 'Use a reachable mutator model.'))
   }
 

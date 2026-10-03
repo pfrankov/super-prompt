@@ -26,6 +26,7 @@ export async function saveSettings(patch: Partial<AppSettings>): Promise<void> {
     await putSettings(next)
   } catch (e) {
     console.error('[settings] persist failed', e)
+    throw e
   }
 }
 
