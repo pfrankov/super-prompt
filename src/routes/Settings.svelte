@@ -1,18 +1,21 @@
 <script lang="ts">
   import { _ } from 'svelte-i18n'
+  import { onDestroy, untrack } from 'svelte'
+  import { get } from 'svelte/store'
   import TopBar from '../components/chrome/TopBar.svelte'
   import TextField from '../components/ui/TextField.svelte'
   import NumberField from '../components/ui/NumberField.svelte'
   import Button from '../components/ui/Button.svelte'
   import Tag from '../components/ui/Tag.svelte'
   import Dialog from '../components/ui/Dialog.svelte'
-  import { settings, saveSettings, setLang } from '../stores/settings'
+  import { settings, settingsDraft, stageSettingsDraft, persistSettingsDraft, setLang } from '../stores/settings'
   import { wipeAll } from '../lib/db/db'
+  import { activeRunId } from '../stores/worker'
   import { t } from '../stores/toast'
   import { listProviderModels, selectJudgeModel } from '../lib/improve/model-routing'
   import { MOCK_JUDGE_MODEL, MOCK_PROVIDER_URL, MOCK_TARGET_MODEL } from '../lib/api/mockOpenai'
   import { newId } from '../lib/util/id'
-  import type { ModelRateLimitRule } from '../lib/types'
+  import type { AppSettings, Lang, ModelRateLimitRule, ProviderConfig, ArbitratorConfig } from '../lib/types'
 
   let testing = $state(false)
   let testResult: 'ok' | 'fail' | null = $state(null)
@@ -26,7 +29,98 @@
   let wipeConfirm = $state('')
   let savedAt = $state<number | null>(null)
 
+  let draft = $state<AppSettings>(structuredClone(get(settings)))
+  let observedDraft = structuredClone(get(settings))
+  const providerEdits = new Set<keyof ProviderConfig>()
+  const arbitratorEdits = new Set<keyof ArbitratorConfig>()
+  let saveError = $state('')
+  let languageError = $state('')
+  let changingLanguage = $state(false)
+  let dirty = $state(false)
+  let saving = $state(0)
+  let editRevision = 0
   let saveTimer: number | undefined
+
+  function editedFields<T extends object>(current: T, previous: T, edits: Set<keyof T>) {
+    for (const key of Object.keys(current) as (keyof T)[]) {
+      if (JSON.stringify(current[key]) !== JSON.stringify(previous[key])) edits.add(key)
+    }
+  }
+
+  function modelPatch<T extends object>(current: T, edits: Set<keyof T>): Partial<T> {
+    return Object.fromEntries([...edits].map((key) => [key, current[key]])) as Partial<T>
+  }
+
+  // A save from the previous page can finish after this form mounts. Refresh
+  // untouched fields while preserving every explicit edit, including reverts.
+  $effect(() => {
+    const committed = $settings
+    const pending = $settingsDraft
+    untrack(() => {
+      draft.provider = { ...structuredClone(committed.provider), ...structuredClone(pending?.patch.provider) }
+      draft.arbitrator = { ...structuredClone(committed.arbitrator), ...structuredClone(pending?.patch.arbitrator) }
+      observedDraft = $state.snapshot(draft)
+      if (pending) editRevision = pending.revision
+      dirty = !!pending
+      saveError = pending?.status === 'failed' ? `${$_('common.unsaved')}. ${$_('toast.error')}` : ''
+      if (pending) savedAt = null
+    })
+  })
+
+  function markEdited() {
+    if (saveTimer !== undefined) clearTimeout(saveTimer)
+    saveTimer = undefined
+    dirty = true
+    savedAt = null
+    saveError = ''
+    ollamaMessage = ''
+    testResult = null
+    editedFields(draft.provider, observedDraft.provider, providerEdits)
+    editedFields(draft.arbitrator, observedDraft.arbitrator, arbitratorEdits)
+    observedDraft = $state.snapshot(draft)
+    editRevision = stageSettingsDraft($state.snapshot({
+      provider: modelPatch(draft.provider, providerEdits),
+      arbitrator: modelPatch(draft.arbitrator, arbitratorEdits),
+    }))
+    providerEdits.clear()
+    arbitratorEdits.clear()
+  }
+
+  async function persistDraft(): Promise<boolean> {
+    if (saveTimer !== undefined) clearTimeout(saveTimer)
+    saveTimer = undefined
+    const revision = editRevision
+    saving += 1
+    try {
+      const currentSaved = await persistSettingsDraft()
+      if (currentSaved) {
+        providerEdits.clear()
+        arbitratorEdits.clear()
+        dirty = false
+        saveError = ''
+        savedAt = Date.now()
+      }
+      return currentSaved
+    } catch {
+      if (revision === editRevision) saveError = `${$_('common.unsaved')}. ${$_('toast.error')}`
+      t.error($_('toast.error'))
+      return false
+    } finally { saving -= 1 }
+  }
+
+  // Preserve the last edit even when navigation happens before the debounce.
+  onDestroy(() => { if (saveTimer !== undefined) void persistDraft() })
+
+  async function changeLanguage(lang: Lang) {
+    if (changingLanguage) return
+    changingLanguage = true
+    languageError = ''
+    try { await setLang(lang) }
+    catch {
+      languageError = $_('toast.error')
+      t.error(languageError)
+    } finally { changingLanguage = false }
+  }
 
   function isLocalProvider(baseUrl: string) {
     try {
@@ -65,25 +159,16 @@
   }
 
   function scheduleSave() {
-    if (saveTimer) clearTimeout(saveTimer)
-    saveTimer = window.setTimeout(async () => {
-      await saveSettings({ provider: $settings.provider, arbitrator: $settings.arbitrator })
-      savedAt = Date.now()
-    }, 500)
+    markEdited()
+    saveTimer = window.setTimeout(() => { void persistDraft() }, 500)
   }
 
   function rateLimits(): ModelRateLimitRule[] {
-    return $settings.provider.modelRateLimits ?? []
+    return draft.provider.modelRateLimits ?? []
   }
 
   function setRateLimits(rules: ModelRateLimitRule[]) {
-    settings.set({
-      ...$settings,
-      provider: {
-        ...$settings.provider,
-        modelRateLimits: rules,
-      },
-    })
+    draft.provider.modelRateLimits = rules
     scheduleSave()
   }
 
@@ -106,9 +191,9 @@
 
   function addCurrentModelLimits() {
     const current = [
-      $settings.provider.targetModel,
-      $settings.provider.judgeModel,
-      $settings.arbitrator.enabled ? $settings.arbitrator.model : '',
+      draft.provider.targetModel,
+      draft.provider.judgeModel,
+      draft.arbitrator.enabled ? draft.arbitrator.model : '',
     ].map((model) => model.trim()).filter(Boolean)
     const existing = new Set(rateLimits().map((rule) => rule.model.trim().toLowerCase()).filter(Boolean))
     const next = [...rateLimits()]
@@ -134,9 +219,9 @@
   async function testConnection() {
     testing = true
     testResult = null
-    const useArbitrator = $settings.arbitrator?.enabled && $settings.arbitrator.baseUrl.trim()
-    const baseUrl = (useArbitrator ? $settings.arbitrator!.baseUrl : $settings.provider.baseUrl).replace(/\/$/, '')
-    const apiKey = useArbitrator ? $settings.arbitrator!.apiKey : $settings.provider.apiKey
+    const useArbitrator = draft.arbitrator?.enabled && draft.arbitrator.baseUrl.trim()
+    const baseUrl = (useArbitrator ? draft.arbitrator!.baseUrl : draft.provider.baseUrl).replace(/\/$/, '')
+    const apiKey = useArbitrator ? draft.arbitrator!.apiKey : draft.provider.apiKey
     try {
       await listProviderModels({ baseUrl, apiKey })
       testResult = 'ok'
@@ -148,6 +233,7 @@
   }
 
   async function useLocalOllama() {
+    const startedRevision = editRevision
     detectingOllama = true
     ollamaMessage = ''
     ollamaOk = false
@@ -160,9 +246,11 @@
       const model = pickOllamaModel(models)
       if (!model) throw new Error('no_chat_models')
       const judge = selectJudgeModel(models, model, 'local')
-      await saveSettings({
+      if (startedRevision !== editRevision) return
+      draft = {
+        ...draft,
         provider: {
-          ...$settings.provider,
+          ...draft.provider,
           label: 'Local Ollama',
           baseUrl,
           apiKey: '',
@@ -172,10 +260,14 @@
           maxRetries: 1,
         },
         arbitrator: {
-          ...$settings.arbitrator,
+          ...draft.arbitrator,
           enabled: false,
         },
-      })
+      }
+      for (const key of ['label', 'baseUrl', 'apiKey', 'targetModel', 'judgeModel', 'requestTimeoutMs', 'maxRetries'] as const) providerEdits.add(key)
+      arbitratorEdits.add('enabled')
+      markEdited()
+      if (!await persistDraft()) return
       savedAt = Date.now()
       testResult = 'ok'
       ollamaOk = true
@@ -190,9 +282,10 @@
   }
 
   async function useDemoProvider() {
-    await saveSettings({
+    draft = {
+      ...draft,
       provider: {
-        ...$settings.provider,
+        ...draft.provider,
         label: 'Demo provider',
         baseUrl: MOCK_PROVIDER_URL,
         apiKey: '',
@@ -202,10 +295,14 @@
         maxRetries: 0,
       },
       arbitrator: {
-        ...$settings.arbitrator,
+        ...draft.arbitrator,
         enabled: false,
       },
-    })
+    }
+    for (const key of ['label', 'baseUrl', 'apiKey', 'targetModel', 'judgeModel', 'requestTimeoutMs', 'maxRetries'] as const) providerEdits.add(key)
+    arbitratorEdits.add('enabled')
+    markEdited()
+    if (!await persistDraft()) return
     savedAt = Date.now()
     testResult = 'ok'
     ollamaOk = true
@@ -213,27 +310,24 @@
   }
 
   async function useTargetForJudge() {
-    await saveSettings({
-      provider: {
-        ...$settings.provider,
-        judgeModel: $settings.provider.targetModel,
-      },
-    })
-    savedAt = Date.now()
+    draft.provider.judgeModel = draft.provider.targetModel
+    providerEdits.add('judgeModel')
+    markEdited()
+    await persistDraft()
   }
 
   async function forgetKey() {
-    $settings.provider.apiKey = ''
-    await saveSettings({ provider: $settings.provider })
-    savedAt = Date.now()
+    draft.provider.apiKey = ''
+    providerEdits.add('apiKey')
+    markEdited()
+    await persistDraft()
   }
 
   async function forgetArbKey() {
-    if ($settings.arbitrator) {
-      $settings.arbitrator.apiKey = ''
-      await saveSettings({ arbitrator: $settings.arbitrator })
-      savedAt = Date.now()
-    }
+    draft.arbitrator.apiKey = ''
+    arbitratorEdits.add('apiKey')
+    markEdited()
+    await persistDraft()
   }
 
   function openWipe() {
@@ -242,7 +336,7 @@
   }
 
   async function doWipe() {
-    if (wipeConfirm !== 'DELETE') return
+    if (wipeConfirm !== 'DELETE' || $activeRunId) return
     await wipeAll()
     wipeOpen = false
     wipeConfirm = ''
@@ -251,6 +345,13 @@
 </script>
 
 <TopBar title={$_('settings.title')} subtitle={$_('settings.subtitle')} />
+
+{#if saveError}
+  <div class="save-error" role="alert">
+    <span>{saveError}</span>
+    <Button size="sm" variant="secondary" disabled={saving > 0} onclick={() => void persistDraft()}>{$_('common.retry')}</Button>
+  </div>
+{/if}
 
 <div class="grid">
   <section class="card surface">
@@ -277,9 +378,9 @@
       <Tag tone={ollamaOk ? 'ok' : 'err'}>{ollamaMessage}</Tag>
     {/if}
     <div class="form">
-      <TextField bind:value={$settings.provider.label} label={$_('settings.label')} oninput={scheduleSave} />
+      <TextField bind:value={draft.provider.label} label={$_('settings.label')} oninput={scheduleSave} />
       <TextField
-        bind:value={$settings.provider.baseUrl}
+        bind:value={draft.provider.baseUrl}
         label={$_('settings.baseUrl')}
         hint="https://openrouter.ai/api/v1"
         validate={(v) => !validBaseUrl(v) ? 'Must start with http://, https://, or mock://' : null}
@@ -287,11 +388,11 @@
       />
       <div class="api-key">
         <TextField
-          bind:value={$settings.provider.apiKey}
+          bind:value={draft.provider.apiKey}
           label={$_('settings.apiKey')}
           type={showKey ? 'text' : 'password'}
           placeholder="sk-..."
-          validate={(v) => isKeylessProvider($settings.provider.baseUrl) || v.trim() ? null : 'API key is required'}
+          validate={(v) => isKeylessProvider(draft.provider.baseUrl) || v.trim() ? null : 'API key is required'}
           oninput={scheduleSave}
         />
         <div class="api-actions">
@@ -304,19 +405,19 @@
             onclick={forgetKey}
           >{$_('settings.forget')}</button>
         </div>
-        <Tag tone={isKeylessProvider($settings.provider.baseUrl) ? 'info' : 'warn'}>
-          {$_(isKeylessProvider($settings.provider.baseUrl) ? 'settings.localNoKey' : 'settings.apiKeyWarning')}
+        <Tag tone={isKeylessProvider(draft.provider.baseUrl) ? 'info' : 'warn'}>
+          {$_(isKeylessProvider(draft.provider.baseUrl) ? 'settings.localNoKey' : 'settings.apiKeyWarning')}
         </Tag>
       </div>
       <TextField
-        bind:value={$settings.provider.targetModel}
+        bind:value={draft.provider.targetModel}
         label={$_('settings.targetModel')}
         hint="openai/gpt-4o-mini"
         validate={(v) => v.trim() ? null : 'Model is required'}
         oninput={scheduleSave}
       />
       <TextField
-        bind:value={$settings.provider.judgeModel}
+        bind:value={draft.provider.judgeModel}
         label={$_('settings.judgeModel')}
         hint="openai/gpt-4o - {$_('settings.judgeModelHint')}"
         validate={(v) => v.trim() ? null : 'Model is required'}
@@ -326,7 +427,7 @@
         <Button size="sm" variant="ghost" onclick={useTargetForJudge}>{$_('settings.useTargetForJudge')}</Button>
       </div>
       <NumberField
-        bind:value={$settings.provider.requestTimeoutMs}
+        bind:value={draft.provider.requestTimeoutMs}
         label={$_('settings.timeout')}
         min={1000}
         step={1000}
@@ -334,7 +435,7 @@
         oninput={scheduleSave}
       />
       <NumberField
-        bind:value={$settings.provider.maxRetries}
+        bind:value={draft.provider.maxRetries}
         label={$_('settings.maxRetries')}
         min={0}
         max={10}
@@ -398,6 +499,9 @@
       </div>
     </div>
     <div class="row">
+      {#if dirty && !saveError}
+        <Tag tone="neutral">{$_(saving || $settingsDraft?.status === 'saving' ? 'common.saving' : 'common.unsaved')}</Tag>
+      {/if}
       {#if savedAt}
         <Tag tone="ok">{$_('actions.saved')}</Tag>
       {/if}
@@ -418,7 +522,7 @@
       <label class="toggle">
         <input
           type="checkbox"
-          bind:checked={$settings.arbitrator.enabled}
+          bind:checked={draft.arbitrator.enabled}
           onchange={scheduleSave}
         />
         <span class="toggle-track" aria-hidden="true"><span class="toggle-thumb"></span></span>
@@ -426,10 +530,10 @@
       </label>
     </div>
 
-    {#if $settings.arbitrator.enabled}
+    {#if draft.arbitrator.enabled}
       <div class="form">
         <TextField
-          bind:value={$settings.arbitrator.baseUrl}
+          bind:value={draft.arbitrator.baseUrl}
           label={$_('settings.arbitratorUrl')}
           hint="https://api.openai.com/v1"
           validate={(v) => !v.startsWith('http://') && !v.startsWith('https://') ? 'Must start with http:// or https://' : null}
@@ -437,7 +541,7 @@
         />
         <div class="api-key">
           <TextField
-            bind:value={$settings.arbitrator.apiKey}
+            bind:value={draft.arbitrator.apiKey}
             label={$_('settings.arbitratorApiKey')}
             type={showArbKey ? 'text' : 'password'}
             placeholder="sk-..."
@@ -453,7 +557,7 @@
           </div>
         </div>
         <TextField
-          bind:value={$settings.arbitrator.model}
+          bind:value={draft.arbitrator.model}
           label={$_('settings.arbitratorModel')}
           hint="openai/o1-mini"
           validate={(v) => v.trim() ? null : 'Model is required'}
@@ -466,11 +570,12 @@
 
   <section class="card surface">
     <h3>{$_('settings.language')}</h3>
+    {#if languageError}<p role="alert" class="language-error">{languageError}</p>{/if}
     <div class="lang-row">
-      <button class="lang" class:active={$settings.lang === 'en'} onclick={() => void setLang('en')}>
+      <button class="lang" class:active={$settings.lang === 'en'} onclick={() => void changeLanguage('en')} disabled={changingLanguage}>
         English
       </button>
-      <button class="lang" class:active={$settings.lang === 'ru'} onclick={() => void setLang('ru')}>
+      <button class="lang" class:active={$settings.lang === 'ru'} onclick={() => void changeLanguage('ru')} disabled={changingLanguage}>
         Русский
       </button>
     </div>
@@ -480,7 +585,7 @@
     <h3>{$_('settings.danger')}</h3>
     <p class="muted">{$_('settings.wipe')}</p>
     <div class="row">
-      <Button variant="danger" onclick={openWipe}>{$_('settings.wipe')}</Button>
+      <Button variant="danger" disabled={!!$activeRunId} onclick={openWipe}>{$_('settings.wipe')}</Button>
     </div>
   </section>
 </div>
@@ -503,6 +608,8 @@
 </Dialog>
 
 <style>
+  .save-error { display:flex; align-items:center; gap:16px; margin-bottom:20px; color:var(--err); }
+  .language-error { color:var(--err); }
   .grid { display: grid; grid-template-columns: 1fr; gap: var(--s-4); max-width: 720px; }
   .card { padding: var(--s-5); display: flex; flex-direction: column; gap: var(--s-4); min-width: 0; }
   h3 { font-size: var(--fs-lg); }

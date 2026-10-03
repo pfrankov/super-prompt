@@ -2,8 +2,7 @@
   import { _ } from 'svelte-i18n'
   import { settings } from '../../stores/settings'
   import { chatCompletion } from '../../lib/api/openaiLike'
-  import { addItems, createDataset, getDatasetByTask } from '../../lib/db/datasets'
-  import { getTask, saveTask } from '../../lib/db/tasks'
+  import { addItems, ensureTaskDataset } from '../../lib/db/datasets'
   import Button from '../ui/Button.svelte'
   import NumberField from '../ui/NumberField.svelte'
   import TextArea from '../ui/TextArea.svelte'
@@ -62,14 +61,15 @@
 
   async function commit() {
     if (!preview.length) return
-    let ds = await getDatasetByTask(taskId)
-    if (!ds) ds = await createDataset(taskId)
-    await addItems(ds.id, preview)
-    const tk = await getTask(taskId)
-    if (tk) await saveTask({ ...tk, datasetId: ds.id })
-    preview = []
-    t.success($_('toast.imported'))
-    oncommitted?.(ds.id)
+    try {
+      const ds = await ensureTaskDataset(taskId)
+      await addItems(ds.id, preview)
+      preview = []
+      t.success($_('toast.imported'))
+      oncommitted?.(ds.id)
+    } catch (e) {
+      error = e instanceof Error ? e.message : String(e)
+    }
   }
 </script>
 

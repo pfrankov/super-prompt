@@ -1,6 +1,7 @@
 import { writable, get } from 'svelte/store'
 import type {
   OptimizationState,
+  Run,
   RunConfig,
 } from '../lib/types'
 import type {
@@ -9,6 +10,9 @@ import type {
   WorkerToMain,
 } from '../lib/optimizer/protocol'
 import { settings } from './settings'
+import { createRun, patchRun } from '../lib/db/runs'
+import { newId } from '../lib/util/id'
+import { t } from './toast'
 
 export const optimizationState = writable<OptimizationState>({
   run: null,
@@ -28,22 +32,85 @@ export const comparisonState = writable<{
   error: '',
 })
 
+let comparisonRequestId = 0
+
 export function resetComparison(): void {
+  comparisonRequestId++
+  worker?.postMessage({ type: 'CANCEL_COMPARE' } satisfies MainToWorker)
   comparisonState.set({ running: false, results: null, error: '' })
 }
 
 let worker: Worker | null = null
+export const activeRunId = writable<string | null>(null)
+export const preparingTaskId = writable<string | null>(null)
 let runActive = false
+let runReservation: string | null = null
+let cancelledPreparation: Run | null = null
 let settingsSyncTimer: number | undefined
+
+function disposeWorker(): void {
+  worker?.terminate()
+  worker = null
+  if (settingsSyncTimer) clearTimeout(settingsSyncTimer)
+  settingsSyncTimer = undefined
+}
+
+function failRunState(runId: string, message: string, finishedAt: number): void {
+  runActive = false
+  optimizationState.update((s) => {
+    if (s.run && s.run.id !== runId) return s
+    return {
+      ...s,
+      run: s.run ? { ...s.run, status: 'failed', finishedAt, errorMessage: message } : s.run,
+      stage: {
+        key: 'failed',
+        iteration: s.stage?.iteration ?? s.run?.iterationCount ?? 0,
+        totalIterations: s.stage?.totalIterations ?? s.run?.config.iterationsCap ?? 0,
+        changeSummary: message,
+        updatedAt: finishedAt,
+      },
+    }
+  })
+  if (get(activeRunId) === runId) activeRunId.set(null)
+}
+
+async function persistFailedRun(runId: string, message: string, finishedAt: number): Promise<string | null> {
+  try {
+    // Keep ownership until the failed startup or terminated worker is durably terminal.
+    await patchRun(runId, { status: 'failed', finishedAt, errorMessage: message })
+  } catch (error) {
+    console.error('[worker] Could not save failed run', error)
+    const persistenceMessage = `${message}; could not save run status: ${error instanceof Error ? error.message : String(error)}. Reload to retry recovery.`
+    if (get(activeRunId) === runId) optimizationState.update((s) => s.run?.id === runId ? {
+      ...s,
+      run: { ...s.run, errorMessage: persistenceMessage },
+    } : s)
+    return persistenceMessage
+  }
+  if (get(activeRunId) === runId) failRunState(runId, message, finishedAt)
+  return null
+}
 
 function ensureWorker(): Worker {
   if (!worker) {
-    worker = new Worker(new URL('../worker/optimizer.worker.ts', import.meta.url), {
+    const currentWorker = new Worker(new URL('../worker/optimizer.worker.ts', import.meta.url), {
       type: 'module',
     })
-    worker.onmessage = onWorkerMessage
-    worker.onerror = (e) => {
+    worker = currentWorker
+    currentWorker.onmessage = (e) => {
+      if (worker === currentWorker) onWorkerMessage(e)
+    }
+    currentWorker.onerror = async (e) => {
+      if (worker !== currentWorker) return
+      const runId = get(activeRunId)
+      const message = e.message || 'Worker failed'
+      const finishedAt = Date.now()
       console.error('[worker]', e)
+      runActive = false
+      disposeWorker()
+      if (get(comparisonState).running) comparisonState.set({ running: false, results: null, error: message })
+      if (!runId || runId === runReservation || runId === cancelledPreparation?.id) return
+      await persistFailedRun(runId, message, finishedAt)
     }
   }
   return worker
@@ -51,8 +118,14 @@ function ensureWorker(): Worker {
 
 function onWorkerMessage(e: MessageEvent<WorkerToMain>) {
   const msg = e.data
+  // An idle worker cannot report progress or release ownership for a run that
+  // was never handed to it, including cancelled rows awaiting cleanup.
+  const owner = get(activeRunId)
+  if (owner && (owner === runReservation || owner === cancelledPreparation?.id)
+    && msg.type !== 'COMPARE_RESULT' && msg.type !== 'COMPARE_ERROR') return
   switch (msg.type) {
     case 'STATE':
+      if (get(activeRunId) && msg.state.run?.id !== get(activeRunId)) break
       optimizationState.set(msg.state)
       break
     case 'STAGE':
@@ -80,29 +153,27 @@ function onWorkerMessage(e: MessageEvent<WorkerToMain>) {
         log: [...s.log, msg.entry].slice(-200),
       }))
       break
-    case 'ERROR':
-      runActive = false
-      optimizationState.update((s) => ({
-        ...s,
-        run: s.run
-          ? { ...s.run, status: 'failed', errorMessage: msg.message }
-          : s.run,
-        stage: {
-          key: 'failed',
-          iteration: s.stage?.iteration ?? s.run?.iterationCount ?? 0,
-          totalIterations: s.stage?.totalIterations ?? s.run?.config.iterationsCap ?? 0,
-          changeSummary: msg.message,
-          updatedAt: Date.now(),
-        },
-      }))
+    case 'CONTROL_ERROR':
+      if (get(activeRunId) !== msg.runId) break
+      optimizationState.update((s) => s.run?.id === msg.runId ? {
+        ...s, run: { ...s.run, errorMessage: msg.message },
+      } : s)
       break
+    case 'ERROR': {
+      const runId = get(activeRunId)
+      if (runId) failRunState(runId, msg.message, Date.now())
+      break
+    }
     case 'DONE':
       runActive = false
+      activeRunId.set(null)
       break
     case 'COMPARE_RESULT':
+      if (msg.requestId !== comparisonRequestId) break
       comparisonState.set({ running: false, results: msg.results, error: '' })
       break
     case 'COMPARE_ERROR':
+      if (msg.requestId !== comparisonRequestId) break
       comparisonState.set({ running: false, results: null, error: msg.message })
       break
   }
@@ -116,7 +187,7 @@ settings.subscribe((s) => {
   if (settingsSyncTimer) clearTimeout(settingsSyncTimer)
   settingsSyncTimer = window.setTimeout(() => {
     const run = get(optimizationState).run
-    if (!run) return
+    if (!run || !runActive || !worker) return
     worker!.postMessage({
       type: 'UPDATE_SETTINGS',
       payload: { provider: s.provider, arbitrator: s.arbitrator, config: run.config },
@@ -124,9 +195,70 @@ settings.subscribe((s) => {
   }, 300)
 })
 
-export function start(runId: string): void {
+export async function start(runId: string): Promise<void> {
+  if (get(activeRunId) || cancelledPreparation) return
+  activeRunId.set(runId)
+  await startOwnedRun(runId)
+}
+
+async function startOwnedRun(runId: string): Promise<void> {
   runActive = true
-  ensureWorker().postMessage({ type: 'START', payload: { runId } } satisfies MainToWorker)
+  try {
+    ensureWorker().postMessage({ type: 'START', payload: { runId } } satisfies MainToWorker)
+  } catch (error) {
+    runActive = false
+    disposeWorker()
+    const message = error instanceof Error ? error.message : String(error)
+    const recoveryError = await persistFailedRun(runId, message, Date.now())
+    if (recoveryError) throw new Error(recoveryError, { cause: error })
+    throw error
+  }
+}
+
+async function stopCancelledPreparation(run: Run): Promise<void> {
+  cancelledPreparation = run
+  const stopped: Run = { ...run, status: 'stopped', finishedAt: Date.now(), errorMessage: null }
+  try {
+    await patchRun(run.id, { status: stopped.status, finishedAt: stopped.finishedAt, errorMessage: null })
+  } catch (error) {
+    const message = `Could not cancel prepared run: ${error instanceof Error ? error.message : String(error)}. Reload to retry recovery.`
+    if (get(activeRunId) === run.id) optimizationState.update((state) => ({ ...state, run: { ...run, errorMessage: message } }))
+    t.error(message)
+    return
+  }
+  if (cancelledPreparation?.id === run.id) cancelledPreparation = null
+  if (get(activeRunId) === run.id) {
+    optimizationState.update((state) => ({ ...state, run: stopped }))
+    activeRunId.set(null)
+  }
+}
+
+/** Own creation and cancellation beyond the lifetime of the requesting workspace. */
+export async function prepareAndStartRun(taskId: string, config: RunConfig, signal: AbortSignal): Promise<Run | null> {
+  if (signal.aborted || get(activeRunId) || cancelledPreparation) return null
+  const reservation = newId()
+  runReservation = reservation
+  preparingTaskId.set(taskId)
+  activeRunId.set(reservation)
+  try {
+    const run = await createRun(taskId, config, signal)
+    runReservation = null
+    activeRunId.set(run.id)
+    optimizationState.set({ run, candidates: [], history: [], log: [], stage: null })
+    preparingTaskId.set(null)
+    if (signal.aborted) {
+      await stopCancelledPreparation(run)
+      return null
+    }
+    await startOwnedRun(run.id)
+    return run
+  } catch (error) {
+    if (signal.aborted && error === signal.reason) return null
+    throw error
+  } finally {
+    if (runReservation === reservation) { runReservation = null; preparingTaskId.set(null) }
+    if (get(activeRunId) === reservation) activeRunId.set(null)
+  }
 }
 
 export function pause(runId?: string): void {
@@ -144,7 +276,10 @@ export function resume(runId?: string): void {
 }
 
 export function stop(runId?: string): void {
-  runActive = false
+  if (cancelledPreparation && (!runId || runId === cancelledPreparation.id)) {
+    void stopCancelledPreparation(cancelledPreparation)
+    return
+  }
   ensureWorker().postMessage({
     type: 'STOP',
     payload: runId ? { runId } : undefined,
@@ -158,11 +293,13 @@ export function compareAB(
   itemIds: string[],
   config: RunConfig
 ): void {
+  const requestId = ++comparisonRequestId
   comparisonState.set({ running: true, results: null, error: '' })
   try {
     ensureWorker().postMessage({
       type: 'COMPARE_AB',
       payload: {
+        requestId,
         taskId,
         promptA,
         promptB,
@@ -185,7 +322,6 @@ export function getState(): void {
 
 /** Reset state — used when navigating away from a task. */
 export function reset(): void {
-  runActive = false
   optimizationState.set({ run: null, candidates: [], history: [], log: [], stage: null })
   resetComparison()
 }

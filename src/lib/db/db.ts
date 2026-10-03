@@ -94,9 +94,22 @@ export function db(): Promise<IDBPDatabase<SPDB>> {
 
 export async function wipeAll(): Promise<void> {
   const d = await db()
-  await Promise.all(
-    (['tasks', 'datasets', 'datasets_items', 'runs', 'candidates', 'iterations', 'pairs'] as const).map(
-      (s) => d.clear(s)
-    )
-  )
+  const stores = ['tasks', 'datasets', 'datasets_items', 'runs', 'candidates', 'iterations', 'pairs'] as const
+  const tx = d.transaction(stores, 'readwrite')
+  const finished = tx.done
+  void finished.catch(() => {})
+  try {
+    await Promise.all(stores.map((store) => tx.objectStore(store).clear()))
+    await finished
+  } catch (error) {
+    try { tx.abort() } catch { /* Already settled. */ }
+    await finished.catch(() => {})
+    throw error
+  }
+  try {
+    for (let i = sessionStorage.length - 1; i >= 0; i--) {
+      const key = sessionStorage.key(i)
+      if (key?.startsWith('sp.prompt-draft.') || key?.startsWith('sp.applied-revision.')) sessionStorage.removeItem(key)
+    }
+  } catch { /* Session storage can be unavailable in restricted browser contexts. */ }
 }

@@ -1,18 +1,32 @@
 <script lang="ts">
   import { settings, setLang } from '../../stores/settings'
+  import { _ } from 'svelte-i18n'
+  import type { Lang } from '../../lib/types'
+  import { t } from '../../stores/toast'
+
+  let changing = $state(false)
+  async function changeLanguage(lang: Lang) {
+    if (changing) return
+    changing = true
+    try { await setLang(lang) }
+    catch { t.error($_('toast.error')) }
+    finally { changing = false }
+  }
 </script>
 
 <div class="switch" role="group" aria-label="Language">
   <button
     type="button"
     class:active={$settings.lang === 'en'}
-    onclick={() => void setLang('en')}
+    onclick={() => void changeLanguage('en')}
+    disabled={changing}
     aria-pressed={$settings.lang === 'en'}
   >EN</button>
   <button
     type="button"
     class:active={$settings.lang === 'ru'}
-    onclick={() => void setLang('ru')}
+    onclick={() => void changeLanguage('ru')}
+    disabled={changing}
     aria-pressed={$settings.lang === 'ru'}
   >RU</button>
 </div>

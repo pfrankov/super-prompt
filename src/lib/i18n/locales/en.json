@@ -1,7 +1,7 @@
 {
   "app": {
     "title": "Super-Prompt",
-    "subtitle": "Optimize Anything"
+    "subtitle": "Prompt refinement lab"
   },
   "nav": {
     "tasks": "Prompts",
@@ -37,7 +37,8 @@
     "unsaved": "Unsaved changes",
     "dropHere": "Drop your file here",
     "invalidType": "Unsupported file type. Use .jsonl, .ndjson, .csv, or .tsv.",
-    "saving": "Saving…"
+    "saving": "Saving…",
+    "retry": "Try again"
   },
   "home": {
     "title": "Prompts",
@@ -348,10 +349,13 @@
     "source": {
       "seed": "seed",
       "mutated": "mutated"
-    }
+    },
+    "topCandidates": "Top scored candidates",
+    "noScoredCandidates": "No scored candidates yet",
+    "pageRange": "{from}–{to} of {total} runs"
   },
   "sidebar": {
-    "version": "v0.1"
+    "version": "v0.3.0"
   },
   "compare": {
     "title": "Compare A vs B",
@@ -424,7 +428,8 @@
     "modelRateLimitRpm": "Requests/min",
     "modelRateLimitAdd": "Add rule",
     "modelRateLimitAddCurrent": "Add current models",
-    "modelRateLimitRemove": "Remove"
+    "modelRateLimitRemove": "Remove",
+    "useDemo": "Use demo"
   },
   "errors": {
     "network": "Network error",
@@ -451,5 +456,110 @@
     "createTask": "Create task",
     "addItem": "Add",
     "deleteRow": "Delete row"
+  },
+  "workspace": {
+    "modelsTitle": "Configure models",
+    "modelsIntro": "Choose the model you want to improve and the arbiter that evaluates its answers.",
+    "demoHelp": "Try the full workflow locally, with no API calls.",
+    "targetRole": "01 / Target",
+    "targetHelp": "This model answers using your prompt.",
+    "arbiterRole": "02 / Arbiter",
+    "arbiterHelp": "Scores the answers and proposes a better prompt.",
+    "separateArbiter": "Use a separate provider for the arbiter",
+    "arbiterUrl": "Arbiter base URL",
+    "arbiterKey": "Arbiter API key",
+    "arbiterModel": "Arbiter model",
+    "keyStorage": "Keys stay in this browser’s IndexedDB in plain text. They are sent only to the provider you configure.",
+    "saveModels": "Save models",
+    "configure": "Configure models",
+    "ready": "Configured · not yet tested",
+    "needsSetup": "Set up your models to begin",
+    "demo": "Demo · simulated scores",
+    "current": "Your prompt",
+    "currentHelp": "Describe what a good answer should do. Your edits are saved automatically.",
+    "result": "Best evaluated prompt",
+    "resultHelp": "Review the result before making it your current prompt.",
+    "empty": "A better version starts here",
+    "emptyHelp": "The arbiter will compare answers on your examples, then keep the strongest evaluated candidate.",
+    "autoExamples": "We’ll create test examples if you don’t have any yet.",
+    "details": "Examples & run options",
+    "why": "Evaluation evidence",
+    "change": "Proposed change",
+    "feedback": "Judge feedback from the candidate’s comparison",
+    "scoreHelp": "Aggregated judge score on sampled examples, on a 0–10 scale. A returning candidate’s score blends its previous score with the latest round. This is not a guarantee of real-world quality.",
+    "trials": "Evaluated pairs: {count} · Wins: {wins} · Losses: {losses} · Ties: {ties}",
+    "runDetails": "Run details & candidates",
+    "cancel": "Cancel preparation",
+    "activeElsewhere": "Another prompt is running. Stop or finish it before starting a new run.",
+    "openActive": "Open active prompt",
+    "saved": "Saved locally",
+    "saving": "Saving…",
+    "saveFailed": "Could not save. Keep this page open and try again.",
+    "provisional": "Run is still in progress. This result may change.",
+    "noResult": "No valid evaluation yet",
+    "name": "Prompt name",
+    "moreCandidates": "Show more candidates",
+    "candidatePage": "Showing {count} of {total} candidates",
+    "failedPairs": "{count} failed pairs excluded",
+    "comparisonCount": "{count} selected examples",
+    "shownExamples": "Showing {from}–{to} of {total} examples",
+    "runFinished": "Run finished",
+    "stopHelp": "Stop cancels pending requests. Your provider may still charge for work already started.",
+    "reversedJudge": "The judge saw A/B in reversed order; quoted reasoning uses that order."
+  },
+  "revision": {
+    "readerWindow": "Lines {from}–{to} of {total} · Characters {start}–{end} of {length}",
+    "workflow": "Prompt improvement steps",
+    "prompt": "Prompt",
+    "models": "Arbiter",
+    "review": "Review changes",
+    "target": "Target",
+    "arbiter": "Arbiter",
+    "notSet": "Not set",
+    "changes": "Review your revision",
+    "edit": "Edit prompt",
+    "current": "Current",
+    "applied": "Applied revision",
+    "proposed": "Proposed",
+    "unified": "Unified diff",
+    "full": "Full prompt",
+    "arbiterEvaluation": "Arbiter evaluation",
+    "score": "{score}/10 score · {count} evaluated pairs",
+    "undo": "Undo last apply",
+    "keep": "Keep current",
+    "apply": "Use this revision",
+    "chooseModels": "Choose models",
+    "restored": "Previous prompt restored",
+    "currentBest": "Your current prompt is the best evaluated version. You can edit it or run another iteration.",
+    "complete": "Completed",
+    "readyReview": "Ready to review",
+    "startHere": "Start with your prompt",
+    "reviewTitle": "Your next revision.",
+    "promptTitle": "What should the model do?",
+    "original": "Original wording & changes",
+    "arbiterNote": "Arbiter note",
+    "feedbackContext": "This historical comparison combines feedback about the previous candidate and its challenger. “Weaknesses in this candidate” refers to the previous candidate; “Regressions observed in challenger” refers to the proposed revision.",
+    "menu": "Prompt menu",
+    "more": "More",
+    "taskNavigation": "Prompt navigation",
+    "scoreOne": "{score}/10 score · 1 evaluated pair",
+    "trialsOne": "Evaluated pairs: 1 · Wins: {wins} · Losses: {losses} · Ties: {ties}",
+    "allHistory": "All run history"
+  },
+  "diff": {
+    "ariaLabel": "Changes to prompt",
+    "unchanged": "unchanged",
+    "removed": "removed",
+    "added": "added",
+    "empty": "Both prompts are empty",
+    "limited": "Detailed matching is limited for this prompt. Unmatched sections are shown as removed and added; counts describe this comparison.",
+    "page": "Diff lines {from}–{to} of {total}",
+    "previous": "Previous lines",
+    "next": "Show more lines",
+    "continued": "continued",
+    "lineEnding": "Line ending",
+    "noLineEnding": "No final line break",
+    "currentLine": "Current line",
+    "proposedLine": "Proposed line"
   }
 }
