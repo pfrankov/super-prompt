@@ -8,14 +8,14 @@
   import DatasetTab from '../components/dataset/DatasetTab.svelte'
   import HistoryTab from '../components/task/HistoryTab.svelte'
   import ImproveWorkspace from '../components/improve/ImproveWorkspace.svelte'
-  import { onMount } from 'svelte'
   import { getTask } from '../lib/db/tasks'
   import type { Task } from '../lib/types'
   import { navigate } from '../stores/router'
   import { t } from '../stores/toast'
   import { deleteTask } from '../lib/db/tasks'
+  import { activeRunId, optimizationState } from '../stores/worker'
 
-  let { taskId, initialTab = 'overview' }: { taskId: string; initialTab?: string } = $props()
+  let { taskId, initialTab = 'improve' }: { taskId: string; initialTab?: string } = $props()
 
   let task: Task | null = $state(null)
   let tab = $state('improve')
@@ -37,11 +37,10 @@
     task = found
   }
 
-  onMount(load)
   $effect(() => { taskId; load() })
 
   async function onDelete() {
-    if (!task) return
+    if (!task || $activeRunId && $optimizationState.run?.taskId === task.id) return
     const id = task.id
     await deleteTask(id)
     t.success($_('toast.deleted'))
@@ -56,25 +55,27 @@
 
 {#if task}
   {#key refreshKey}
-    <TopBar
-      title={task.name || $_('common.untitled')}
-      subtitle={task.description}
-    >
-      <Button variant="danger" size="sm" onclick={() => (deleteOpen = true)}>{$_('common.delete')}</Button>
-    </TopBar>
+    <div class="task-chrome">
+      <TopBar
+        title={task.name || $_('common.untitled')}
+        compact
+      >
+        <Button variant="ghost" size="sm" disabled={!!$activeRunId && $optimizationState.run?.taskId === task.id} onclick={() => (deleteOpen = true)}>{$_('common.delete')}</Button>
+      </TopBar>
 
-    <Tabs
-      tabs={[
-        { value: 'improve', label: $_('task.tabs.improve') },
-        { value: 'overview', label: $_('task.tabs.overview') },
-        { value: 'dataset', label: $_('task.tabs.dataset') },
-        { value: 'history', label: $_('task.tabs.history') },
-      ]}
-      bind:active={tab}
-      onchange={onTabChange}
-    />
+      <Tabs
+        tabs={[
+          { value: 'improve', label: $_('task.tabs.improve') },
+          { value: 'overview', label: $_('task.tabs.overview') },
+          { value: 'dataset', label: $_('task.tabs.dataset') },
+          { value: 'history', label: $_('task.tabs.history') },
+        ]}
+        bind:active={tab}
+        onchange={onTabChange}
+      />
+    </div>
 
-    <div class="tab-pane" aria-busy={false}>
+    <div class="tab-pane" role="tabpanel" id="task-panel" aria-labelledby={`tab-${tab}`} tabindex="0" aria-busy={false}>
       {#if tab === 'improve'}
         <ImproveWorkspace bind:task={task as Task} />
       {:else if tab === 'overview'}
@@ -93,6 +94,17 @@
 {/if}
 
 <style>
-  .tab-pane { margin-top: var(--s-4); }
+  .task-chrome { display:flex; align-items:center; justify-content:space-between; gap:24px; }
+  .task-chrome :global(.bar.compact) { margin:0; flex:1; min-width:0; }
+  .task-chrome :global(.tabs) { gap: 24px; padding: 0; }
+  .task-chrome :global(.tab) { padding: 10px 0; font-size: var(--fs-sm); border-radius: 0; }
+  .task-chrome :global(.tab:hover) { background: transparent; color: var(--ink-1); }
+  .tab-pane { margin-top: 24px; }
   .muted { color: var(--ink-3); padding: var(--s-8); }
+  @media (max-width: 800px) {
+    .task-chrome { display:block; }
+    .task-chrome :global(.bar.compact) { margin-bottom:12px; }
+    .task-chrome :global(.tabs) { gap: 22px; }
+    .tab-pane { margin-top: 24px; }
+  }
 </style>

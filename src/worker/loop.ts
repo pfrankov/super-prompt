@@ -25,6 +25,7 @@ import type { CompareResult, MainToWorker, WorkerToMain } from '../lib/optimizer
 import { throttle } from '../lib/util/throttle'
 
 export interface Ctx {
+  signal?: AbortSignal
   task: Task
   items: DatasetItem[]
   provider: ProviderConfig
@@ -33,9 +34,6 @@ export interface Ctx {
 }
 
 type Send = (msg: WorkerToMain) => void
-
-let stopRequested = false
-let pauseRequested = false
 
 interface PairOutcome {
   outputA: string
@@ -49,11 +47,12 @@ interface PairOutcome {
   errorMessage?: string
 }
 
-async function runTarget(provider: ProviderConfig, systemPrompt: string, input: string, temperature: number): Promise<{ text: string; tokensIn: number; tokensOut: number }> {
+async function runTarget(provider: ProviderConfig, systemPrompt: string, input: string, temperature: number, signal?: AbortSignal): Promise<{ text: string; tokensIn: number; tokensOut: number }> {
   const resp = await chatCompletionWithRetry({
     baseUrl: provider.baseUrl,
     apiKey: provider.apiKey,
     model: provider.targetModel,
+    signal,
     messages: [
       { role: 'system', content: systemPrompt },
       { role: 'user', content: input },
@@ -94,8 +93,8 @@ async function runOnePair(
   let tokensOut = 0
   onPhase?.('answering')
   const [rAResult, rBResult] = await Promise.allSettled([
-    runTarget(ctx.provider, orderA.text, item.input, ctx.config.targetTemperature),
-    runTarget(ctx.provider, orderB.text, item.input, ctx.config.targetTemperature),
+    runTarget(ctx.provider, orderA.text, item.input, ctx.config.targetTemperature, ctx.signal),
+    runTarget(ctx.provider, orderB.text, item.input, ctx.config.targetTemperature, ctx.signal),
   ])
 
   if (rAResult.status === 'fulfilled') {
@@ -139,6 +138,7 @@ async function runOnePair(
         outputB,
         expectedOutput: item.expectedOutput,
         temperature: ctx.config.judgeTemperature,
+        signal: ctx.signal,
       }
     )
     tokensIn += jRes.tokensIn
@@ -151,7 +151,8 @@ async function runOnePair(
       tokensIn,
       tokensOut,
       latencyMs: Date.now() - t0,
-      failed: false,
+      failed: !!jRes.errorMessage,
+      errorMessage: jRes.errorMessage,
     }
   } catch (e) {
     const msg = `judge_failed: ${errorMessage(e)}`
@@ -170,11 +171,13 @@ async function runOnePair(
 }
 
 export async function comparePrompts(ctx: Ctx, promptA: string, promptB: string, itemIds: string[]): Promise<CompareResult> {
-  const items = itemIds.length
-    ? ctx.items.filter((it) => itemIds.includes(it.id))
+  const selectedIds = new Set(itemIds)
+  const items = selectedIds.size
+    ? ctx.items.filter((it) => selectedIds.has(it.id))
     : ctx.items
   if (items.length === 0) throw new Error('no dataset items selected')
   const outcomes = await pool(items, ctx.config.concurrency, async (item) => {
+    ctx.signal?.throwIfAborted()
     const swap = Math.random() < 0.5
     const candA: PromptCandidate = { id: 'A', runId: 'compare', parentId: null, text: promptA, source: 'seed', score: null, wins: 0, losses: 0, ties: 0, iterations: 0, tokensIn: 0, tokensOut: 0, createdAt: 0 }
     const candB: PromptCandidate = { id: 'B', runId: 'compare', parentId: null, text: promptB, source: 'seed', score: null, wins: 0, losses: 0, ties: 0, iterations: 0, tokensIn: 0, tokensOut: 0, createdAt: 0 }
@@ -183,11 +186,19 @@ export async function comparePrompts(ctx: Ctx, promptA: string, promptB: string,
   if (outcomes.every((o) => o.failed)) {
     throw new Error(outcomes[0]?.errorMessage ?? 'all comparison pairs failed')
   }
+  // Structured fields use the user's A/B labels; abSwapped records the judge's order.
   return outcomes.map((o, i) => ({
     itemId: items[i].id,
-    outputA: o.outputA,
-    outputB: o.outputB,
-    verdict: o.verdict,
+    outputA: o.abSwapped ? o.outputB : o.outputA,
+    outputB: o.abSwapped ? o.outputA : o.outputB,
+    verdict: o.abSwapped ? {
+      ...o.verdict,
+      winner: o.verdict.winner === 'A' ? 'B' : o.verdict.winner === 'B' ? 'A' : 'tie',
+      scoreA: o.verdict.scoreB,
+      scoreB: o.verdict.scoreA,
+      feedbackA: o.verdict.feedbackB,
+      feedbackB: o.verdict.feedbackA,
+    } : o.verdict,
     abSwapped: o.abSwapped,
     tokensIn: o.tokensIn,
     tokensOut: o.tokensOut,
@@ -204,7 +215,10 @@ export function createRunner(opts: {
   send: Send
 }) {
   const { runId, send } = opts
-  const ctx: Ctx = opts.ctx
+  let stopRequested = false
+  let pauseRequested = false
+  const abortController = new AbortController()
+  const ctx: Ctx = { ...opts.ctx, signal: abortController.signal }
   let run: Run = opts.initialRun
   let candidates: PromptCandidate[] = [...opts.initialCandidates]
   let history: IterationRecord[] = []
@@ -326,7 +340,18 @@ export function createRunner(opts: {
     return 'No prior feedback yet. Create a meaningfully stronger variant.'
   }
 
-  async function mutateWithRetry(parent: PromptCandidate, feedback: string, parentScore: number | null, childScore: number | null): Promise<{ text: string; rationale: string }> {
+  async function recordUsage(tokensIn: number, tokensOut: number) {
+    run = {
+      ...run,
+      totalTokensIn: run.totalTokensIn + tokensIn,
+      totalTokensOut: run.totalTokensOut + tokensOut,
+    }
+    await patchRun(run.id, { totalTokensIn: run.totalTokensIn, totalTokensOut: run.totalTokensOut })
+  }
+
+  async function mutateWithRetry(parent: PromptCandidate, feedback: string, parentScore: number | null, childScore: number | null): Promise<{ text: string; rationale: string; tokensIn: number; tokensOut: number }> {
+    let tokensIn = 0
+    let tokensOut = 0
     for (const t of [ctx.config.mutatorTemperature, 0.9]) {
       const r = await runMutator({
         provider: ctx.provider,
@@ -337,13 +362,17 @@ export function createRunner(opts: {
         parentScore,
         childScore,
         aggregatedFeedback: feedback,
+        signal: ctx.signal,
         temperature: t,
       })
+      tokensIn += r.tokensIn
+      tokensOut += r.tokensOut
+      await recordUsage(r.tokensIn, r.tokensOut)
       if (r.newPrompt && r.newPrompt !== parent.text) {
-        return { text: r.newPrompt, rationale: r.rationale }
+        return { text: r.newPrompt, rationale: r.rationale, tokensIn, tokensOut }
       }
     }
-    return { text: forceVariation(parent.text), rationale: 'forced_variation' }
+    return { text: forceVariation(parent.text), rationale: 'forced_variation', tokensIn, tokensOut }
   }
 
   async function createChallenger(parent: PromptCandidate): Promise<PromptCandidate> {
@@ -377,8 +406,8 @@ export function createRunner(opts: {
       losses: 0,
       ties: 0,
       iterations: 0,
-      tokensIn: 0,
-      tokensOut: 0,
+      tokensIn: m.tokensIn,
+      tokensOut: m.tokensOut,
       rationale: m.rationale,
       createdAt: Date.now(),
     }
@@ -395,6 +424,7 @@ export function createRunner(opts: {
   }
 
   async function runIteration(iterIndex: number) {
+    const startedAt = Date.now()
     const parent = pickParent()
     emitStage('selecting', {
       iteration: iterIndex + 1,
@@ -402,6 +432,8 @@ export function createRunner(opts: {
       parentScore: parent.score,
     })
     const challenger = await createChallenger(parent)
+    const mutationTokensIn = challenger.source === 'mutated' ? challenger.tokensIn : 0
+    const mutationTokensOut = challenger.source === 'mutated' ? challenger.tokensOut : 0
     emitLog('info', `iter ${iterIndex}: parent=${parent.id.slice(0, 6)} (s=${parent.score?.toFixed(2) ?? 'n/a'}) vs challenger=${challenger.id.slice(0, 6)} (s=${challenger.score?.toFixed(2) ?? 'n/a'})`)
 
     const rng = mulberry32(iterIndex * 1009 + 17)
@@ -459,8 +491,8 @@ export function createRunner(opts: {
       const o = outcomes[i]
       parentTokensIn += Math.round(o.tokensIn / 2)
       parentTokensOut += Math.round(o.tokensOut / 2)
-      childTokensIn += Math.round(o.tokensIn / 2)
-      childTokensOut += Math.round(o.tokensOut / 2)
+      childTokensIn += o.tokensIn - Math.round(o.tokensIn / 2)
+      childTokensOut += o.tokensOut - Math.round(o.tokensOut / 2)
 
       if (!o.failed) {
         const parentWon = o.abSwapped ? o.verdict.winner === 'B' : o.verdict.winner === 'A'
@@ -494,10 +526,31 @@ export function createRunner(opts: {
       })
     }
 
+    const pairTokensIn = pairs.reduce((sum, pair) => sum + pair.tokensIn, 0)
+    const pairTokensOut = pairs.reduce((sum, pair) => sum + pair.tokensOut, 0)
+    await recordUsage(pairTokensIn, pairTokensOut)
+    const iteration: IterationRecord = {
+      id: newId(),
+      runId: run.id,
+      index: iterIndex,
+      parentCandidateId: parent.id,
+      childCandidateId: challenger.id,
+      sampleItemIds: sampleItems.map((item) => item.id),
+      aggregatedFeedback: '',
+      rationale: challenger.rationale,
+      tokensIn: mutationTokensIn + pairTokensIn,
+      tokensOut: mutationTokensOut + pairTokensOut,
+      startedAt,
+      finishedAt: Date.now(),
+    }
+    pairs.forEach((pair) => (pair.iterationId = iteration.id))
+
     const failedCount = outcomes.filter((o) => o.failed).length
     if (failedCount > 0) emitLog('warn', `iter ${iterIndex}: ${failedCount}/${outcomes.length} pairs failed`)
     const n = outcomes.length - failedCount
     if (n === 0) {
+      await addIteration(iteration, pairs)
+      history = [...history, iteration]
       const reasons = compactFailureReasons(outcomes)
       throw new Error(`iter ${iterIndex}: all pairs failed${reasons ? `: ${reasons}` : ''}`)
     }
@@ -553,21 +606,7 @@ export function createRunner(opts: {
       tokensOut: challenger.tokensOut + childTokensOut,
     }
 
-    const iteration: IterationRecord = {
-      id: newId(),
-      runId: run.id,
-      index: iterIndex,
-      parentCandidateId: parent.id,
-      childCandidateId: updatedChallenger.id,
-      sampleItemIds: sampleItems.map((s) => s.id),
-      aggregatedFeedback: feedback,
-      rationale: updatedChallenger.rationale,
-      tokensIn: pairs.reduce((s, p) => s + p.tokensIn, 0),
-      tokensOut: pairs.reduce((s, p) => s + p.tokensOut, 0),
-      startedAt: Date.now() - outcomes.reduce((s, o) => Math.max(s, o.latencyMs), 0),
-      finishedAt: Date.now(),
-    }
-    pairs.forEach((p) => (p.iterationId = iteration.id))
+    iteration.aggregatedFeedback = feedback
 
     // Persist
     emitStage('persisting', {
@@ -601,8 +640,8 @@ export function createRunner(opts: {
       plateauCount++
     }
 
-    const totalsIn = run.totalTokensIn + iteration.tokensIn
-    const totalsOut = run.totalTokensOut + iteration.tokensOut
+    const totalsIn = run.totalTokensIn
+    const totalsOut = run.totalTokensOut
     run = {
       ...run,
       iterationCount: iterIndex + 1,
@@ -651,6 +690,7 @@ export function createRunner(opts: {
     },
     stop: async () => {
       stopRequested = true
+      abortController.abort()
       if (run.status === 'running' || run.status === 'paused') {
         run = { ...run, status: 'stopped', finishedAt: Date.now() }
         await patchRun(run.id, { status: 'stopped', finishedAt: run.finishedAt })
@@ -683,6 +723,7 @@ export function createRunner(opts: {
           while (pauseRequested && !stopRequested) {
             await sleep(100)
           }
+          if (stopRequested) break
           await runIteration(i)
           if (stopRequested) break
           if (ctx.config.tokenBudget > 0 && (run.totalTokensIn + run.totalTokensOut) >= ctx.config.tokenBudget) {
@@ -692,7 +733,7 @@ export function createRunner(opts: {
             break
           }
         }
-        if (run.status === 'running') {
+        if (run.status === 'running' || run.status === 'paused') {
           run = { ...run, status: 'completed', finishedAt: Date.now() }
           await patchRun(run.id, { status: 'completed', finishedAt: Date.now() })
         }
@@ -700,7 +741,7 @@ export function createRunner(opts: {
           (b, c) => (c.score != null && (!b || c.score > (b.score ?? 0)) ? c : b),
           null
         )
-        emitStage('completed', {
+        emitStage(run.status === 'stopped' ? 'stopped' : 'completed', {
           iteration: run.iterationCount,
           parentCandidateId: best?.parentId ?? null,
           challengerCandidateId: best?.id ?? null,
@@ -710,6 +751,14 @@ export function createRunner(opts: {
         emitState()
         send({ type: 'DONE', finalCandidateId: best?.id ?? null })
       } catch (e) {
+        if (stopRequested) {
+          run = { ...run, status: 'stopped', finishedAt: run.finishedAt ?? Date.now() }
+          await patchRun(run.id, { status: 'stopped', finishedAt: run.finishedAt })
+          emitStage('stopped')
+          emitState()
+          send({ type: 'DONE', finalCandidateId: run.bestCandidateId })
+          return
+        }
         const err = e as Error
         emitLog('error', err.message)
         run = { ...run, status: 'failed', finishedAt: Date.now(), errorMessage: err.message }

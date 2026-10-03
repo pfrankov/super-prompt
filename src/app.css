@@ -1,47 +1,47 @@
 /* ===========================================
    Super-Prompt - Design Tokens & Base Styles
-   Quiet graphite product UI with one warm accent
+   Quiet revision workbench
    =========================================== */
 
 :root {
   /* surfaces */
-  --bg-0: #10100f;
-  --bg-1: #171716;
-  --bg-2: #20201e;
-  --bg-3: #292925;
-  --bg-elevated: #303028;
+  --bg-0: #ffffff;
+  --bg-1: #fafafb;
+  --bg-2: #f2f3f6;
+  --bg-3: #e8eaf0;
+  --bg-elevated: #dfe3eb;
 
   /* paper / ink */
-  --ink-1: #f1eee7;
-  --ink-2: #c8c1b3;
-  --ink-3: #918a7b;
-  --ink-4: #625d53;
+  --ink-1: #141518;
+  --ink-2: #4f596b;
+  --ink-3: #667085;
+  --ink-4: #7c8797;
 
-  /* pastel accents */
-  --acc-rose: #e8aaa3;
-  --acc-peach: #eeb77c;
-  --acc-mint: #9fcaad;
-  --acc-sky: #9fbfd8;
+  /* restrained feedback colors */
+  --acc-rose: #ae3434;
+  --acc-peach: #484cff;
+  --acc-mint: #237c4b;
+  --acc-sky: #484cff;
 
   /* semantic */
-  --primary: var(--acc-peach);
-  --primary-hover: #f3c18c;
-  --primary-fg: #18110a;
+  --primary: #151618;
+  --primary-hover: #303237;
+  --primary-fg: #ffffff;
   --secondary: var(--acc-sky);
   --ok: var(--acc-mint);
-  --warn: var(--acc-peach);
+  --warn: #926b20;
   --err: var(--acc-rose);
   --info: var(--acc-sky);
 
   /* borders */
-  --border-1: rgba(241, 238, 231, 0.09);
-  --border-2: rgba(241, 238, 231, 0.16);
-  --border-strong: rgba(241, 238, 231, 0.26);
+  --border-1: #e1e4eb;
+  --border-2: #cbd1dc;
+  --border-strong: #9da7b7;
 
   /* radii */
   --r-sm: 6px;
-  --r-md: 8px;
-  --r-lg: 12px;
+  --r-md: 6px;
+  --r-lg: 8px;
   --r-pill: 999px;
 
   /* spacing */
@@ -73,15 +73,19 @@
   /* motion */
   --ease: cubic-bezier(0.2, 0.8, 0.2, 1);
   --ease-out: cubic-bezier(0.16, 1, 0.3, 1);
-  --dur-fast: 200ms;
-  --dur-base: 400ms;
+  --dur-fast: 140ms;
+  --dur-base: 220ms;
 
   /* elevation */
-  --shadow-1: 0 1px 0 rgba(255, 255, 255, 0.035) inset, 0 1px 2px rgba(0, 0, 0, 0.22);
-  --shadow-2: 0 1px 0 rgba(255, 255, 255, 0.04) inset, 0 8px 18px rgba(0, 0, 0, 0.26);
-  --shadow-3: 0 1px 0 rgba(255, 255, 255, 0.05) inset, 0 18px 38px rgba(0, 0, 0, 0.38);
+  --shadow-1: none;
+  --shadow-2: 0 4px 14px rgba(0, 0, 0, 0.16);
+  --shadow-3: 0 14px 32px rgba(0, 0, 0, 0.28);
   --shadow-modal: 0 24px 60px rgba(0, 0, 0, 0.6);
-  --shadow-glow: 0 0 0 1px rgba(238, 183, 124, 0.45), 0 8px 22px rgba(238, 183, 124, 0.12);
+  --shadow-glow: none;
+
+  /* centered work canvas */
+  --canvas-width: 1320px;
+  --page-gutter: 56px;
 
   /* z-index */
   --z-dropdown: 40;
@@ -119,7 +123,7 @@ html, body, #app {
 }
 
 html {
-  color-scheme: dark;
+  color-scheme: light;
   font-size: 16px;
   -webkit-text-size-adjust: 100%;
 }
@@ -129,23 +133,19 @@ body {
   font-size: var(--fs-md);
   line-height: var(--lh-base);
   color: var(--ink-1);
-  background:
-    linear-gradient(180deg, #11110f 0%, #10100f 42%, #0d0d0c 100%);
+  background: var(--bg-0);
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
   text-rendering: optimizeLegibility;
   font-feature-settings: "cv11", "ss01";
 }
 
-/* subtle fixed texture on bg-0 */
-body::before {
-  content: "";
-  position: fixed;
-  inset: 0;
-  pointer-events: none;
-  background-image: radial-gradient(rgba(241, 238, 231, 0.018) 1px, transparent 1px);
-  background-size: 4px 4px;
-  z-index: -1;
+@media (max-width: 900px) {
+  :root { --page-gutter: 32px; }
+}
+
+@media (max-width: 600px) {
+  :root { --page-gutter: 20px; }
 }
 
 h1, h2, h3, h4, h5, h6 {
@@ -247,6 +247,8 @@ img, svg {
 
 /* selection */
 ::selection {
-  background: rgba(238, 183, 124, 0.3);
+  background: rgba(175, 190, 213, 0.24);
   color: var(--ink-1);
 }
+
+@keyframes surface-enter { from { opacity: 0; transform: translateY(4px); } to { opacity: 1; transform: translateY(0); } }
