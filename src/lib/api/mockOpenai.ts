@@ -1,4 +1,5 @@
 import type { ChatMessage, ChatResponse } from './openaiLike'
+import { abortableDelay } from './abort'
 
 export const MOCK_PROVIDER_URL = 'mock://super-prompt'
 export const MOCK_TARGET_MODEL = 'mock-target'
@@ -25,7 +26,8 @@ export function mockModelList(): string[] {
 }
 
 export async function mockChatCompletion(req: MockChatRequest): Promise<ChatResponse> {
-  await mockDelay(req.signal)
+  await abortableDelay(180, req.signal)
+  req.signal?.throwIfAborted()
   const text = mockText(req.messages)
   const promptTokens = estimateTokens(req.messages.map((m) => m.content).join('\n'))
   const completionTokens = estimateTokens(text)
@@ -262,21 +264,4 @@ function section(text: string, name: string): string {
 
 function estimateTokens(text: string): number {
   return Math.max(1, Math.ceil(text.length / 4))
-}
-
-function mockDelay(signal?: AbortSignal): Promise<void> {
-  if (signal?.aborted) return Promise.reject(abortError())
-  return new Promise((resolve, reject) => {
-    const timer = setTimeout(resolve, 180)
-    signal?.addEventListener('abort', () => {
-      clearTimeout(timer)
-      reject(abortError())
-    }, { once: true })
-  })
-}
-
-function abortError(): Error {
-  const err = new Error('Aborted')
-  err.name = 'AbortError'
-  return err
 }

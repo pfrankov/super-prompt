@@ -87,8 +87,8 @@
   }
   input {
     appearance: none;
-    background: color-mix(in srgb, var(--bg-2) 78%, black);
-    border: 1px solid var(--border-1);
+    background: var(--bg-1);
+    border: 1px solid var(--border-2);
     border-radius: var(--r-md);
     padding: 0 var(--s-3);
     height: 40px;
@@ -102,13 +102,13 @@
   }
   input::placeholder { color: var(--ink-3); }
   input:hover:not(:disabled):not(:focus) {
-    background: color-mix(in srgb, var(--bg-2) 88%, black);
+    background: var(--bg-0);
     border-color: var(--border-2);
   }
   input:focus {
     outline: none;
-    border-color: rgba(238, 183, 124, 0.65);
-    box-shadow: 0 0 0 3px rgba(238, 183, 124, 0.11);
+    border-color: var(--secondary);
+    box-shadow: 0 0 0 3px color-mix(in srgb, var(--secondary) 12%, transparent);
   }
   input:disabled { opacity: 0.5; cursor: not-allowed; }
   input[aria-invalid="true"] { border-color: var(--err); }

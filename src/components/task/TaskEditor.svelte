@@ -52,6 +52,8 @@
       initial = snapshot(snap)
       dirty = false
       t.success($_('actions.saved'))
+    } catch (error) {
+      t.error(error instanceof Error ? error.message : String(error))
     } finally {
       saving = false
     }
