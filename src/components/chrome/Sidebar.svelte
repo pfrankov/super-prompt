@@ -20,12 +20,12 @@
 <aside class="sidebar">
   <div class="brand">
     <svg class="logo" viewBox="0 0 32 32" width="28" height="28" aria-hidden="true">
-      <rect width="32" height="32" rx="7" fill="#25201a"/>
-      <path d="M8 22 L16 6 L24 22 Z" fill="none" stroke="#f6c89f" stroke-width="2" stroke-linejoin="round"/>
-      <circle cx="16" cy="18" r="2" fill="#f3b8b3"/>
+      <rect width="32" height="32" rx="7" fill="#202b49"/>
+      <path d="M8 22 L16 6 L24 22 Z" fill="none" stroke="#9caeff" stroke-width="2" stroke-linejoin="round"/>
+      <circle cx="16" cy="18" r="2" fill="#b8c7ff"/>
     </svg>
     <div class="brand-text">
-      <h1>{$_('app.title')}</h1>
+      <strong>{$_('app.title')}</strong>
       <span class="subtitle">{$_('app.subtitle')}</span>
     </div>
   </div>
@@ -75,7 +75,7 @@
 
 <style>
   .sidebar {
-    width: 244px;
+    width: 200px;
     background: color-mix(in srgb, var(--bg-1) 92%, black);
     border-right: 1px solid var(--border-1);
     display: flex;
@@ -88,7 +88,7 @@
   }
   .brand { display: flex; gap: var(--s-3); align-items: center; padding: var(--s-1) var(--s-2) var(--s-3); border-bottom: 1px solid var(--border-1); }
   .logo { flex: 0 0 auto; }
-  .brand-text h1 {
+  .brand-text strong {
     font-size: var(--fs-lg);
     margin: 0;
     line-height: 1.1;

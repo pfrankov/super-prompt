@@ -26,6 +26,7 @@
   let offset = $state(0)
   let localDataset: Dataset | null = $state(null)
   const pageSize = 10
+  const saveQueues = new Map<string, Promise<void>>()
 
   let newInput = $state('')
   let newExpected = $state('')
@@ -98,15 +99,20 @@
     }
     items = items.map((row) => row.id === it.id ? next : row)
     pendingSave = new Set([...pendingSave, it.id])
+    const previous = saveQueues.get(it.id) ?? Promise.resolve()
+    const write = previous.catch(() => {}).then(() => updateItem(next))
+    saveQueues.set(it.id, write)
     try {
-      await updateItem(next)
+      await write
     } catch (e) {
       t.error(String(e))
     } finally {
-      const next = new Set(pendingSave)
-      next.delete(it.id)
-      pendingSave = next
-      onchanged?.()
+      if (saveQueues.get(it.id) === write) {
+        saveQueues.delete(it.id)
+        const remaining = new Set(pendingSave)
+        remaining.delete(it.id)
+        pendingSave = remaining
+      }
     }
   }
 </script>
@@ -143,6 +149,7 @@
                   class="cell-input"
                   class:busy={pendingSave.has(it.id)}
                   rows="2"
+                  aria-label={`${$_('dataset.input')} ${offset + i + 1}`}
                   value={it.input}
                   oninput={(e) => edit(it, 'input', (e.currentTarget as HTMLTextAreaElement).value)}
                 ></textarea>
@@ -152,6 +159,7 @@
                   class="cell-input"
                   class:busy={pendingSave.has(it.id)}
                   rows="2"
+                  aria-label={`${$_('dataset.expected')} ${offset + i + 1}`}
                   value={it.expectedOutput ?? ''}
                   oninput={(e) => edit(it, 'expectedOutput', (e.currentTarget as HTMLTextAreaElement).value)}
                 ></textarea>
@@ -181,9 +189,9 @@
 
     {#if total > pageSize}
       <div class="pager">
-        <Button size="sm" variant="ghost" disabled={offset === 0} onclick={() => { offset = Math.max(0, offset - pageSize); reload() }}>{'<'}</Button>
+        <Button size="sm" variant="ghost" aria-label={$_('common.back')} disabled={offset === 0} onclick={() => { offset = Math.max(0, offset - pageSize); reload() }}>{'<'}</Button>
         <span class="dim numeric">{offset + 1}-{Math.min(offset + pageSize, total)} / {total}</span>
-        <Button size="sm" variant="ghost" disabled={offset + pageSize >= total} onclick={() => { offset += pageSize; reload() }}>{'>'}</Button>
+        <Button size="sm" variant="ghost" aria-label={$_('common.next')} disabled={offset + pageSize >= total} onclick={() => { offset += pageSize; reload() }}>{'>'}</Button>
       </div>
     {/if}
   {/if}

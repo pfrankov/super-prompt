@@ -11,7 +11,9 @@ import type { PromptCandidate, Run, Task, DatasetItem, ProviderConfig, Arbitrato
 import { newId } from '../lib/util/id'
 
 let runner: ReturnType<typeof createRunner> | null = null
-let initialCandidates: PromptCandidate[] = []
+let comparisonController: AbortController | null = null
+let starting = false
+let stopDuringStart = false
 
 function send(msg: WorkerToMain) {
   ;(self as unknown as Worker).postMessage(msg)
@@ -70,6 +72,10 @@ self.onmessage = async (e: MessageEvent<MainToWorker>) => {
   try {
     switch (msg.type) {
       case 'START': {
+        if (starting || runner && ['running', 'paused'].includes(runner.snapshot().run?.status ?? '')) return
+        starting = true
+        stopDuringStart = false
+        try {
         const runId = msg.payload.runId
         const run = await getRun(runId)
         if (!run) throw new Error('run not found')
@@ -85,7 +91,7 @@ self.onmessage = async (e: MessageEvent<MainToWorker>) => {
         const provider: ProviderConfig = settings.provider
         const arbitrator: ArbitratorConfig | undefined = settings.arbitrator
         // Hydrate initial candidates: parent (task.initialPrompt) + seeds
-        initialCandidates = await getCandidates(runId)
+        const initialCandidates = await getCandidates(runId)
         if (initialCandidates.length === 0) {
           const seedPrompts = [task.initialPrompt, ...task.seedPrompts].filter(Boolean)
           for (let i = 0; i < seedPrompts.length; i++) {
@@ -107,6 +113,7 @@ self.onmessage = async (e: MessageEvent<MainToWorker>) => {
             initialCandidates.push(c)
           }
         }
+        if (stopDuringStart) { await stopPersistedRun(runId); return }
         runner = createRunner({
           runId,
           initialRun: run,
@@ -114,7 +121,9 @@ self.onmessage = async (e: MessageEvent<MainToWorker>) => {
           ctx: { task, items, provider, arbitrator, config: run.config },
           send,
         })
+        starting = false
         await runner.start()
+        } finally { starting = false }
         break
       }
       case 'PAUSE':
@@ -124,18 +133,27 @@ self.onmessage = async (e: MessageEvent<MainToWorker>) => {
         await runner?.resume()
         break
       case 'STOP':
+        if (starting) { stopDuringStart = true; break }
         if (runner) await runner.stop()
         else await stopPersistedRun(msg.payload?.runId)
         break
+      case 'CANCEL_COMPARE':
+        comparisonController?.abort()
+        break
       case 'COMPARE_AB': {
+        comparisonController?.abort()
+        const controller = new AbortController()
+        comparisonController = controller
         try {
-          const ctx = runner?.getCtx() ?? await loadCompareCtx(msg.payload.taskId, msg.payload.config)
+          const ctx = await loadCompareCtx(msg.payload.taskId, msg.payload.config)
+          controller.signal.throwIfAborted()
+          ctx.signal = controller.signal
           const results = await comparePrompts(ctx, msg.payload.promptA, msg.payload.promptB, msg.payload.itemIds)
           send({ type: 'LOG', entry: { ts: Date.now(), level: 'info', msg: `compareAB: ${results.length} pairs done` } })
-          send({ type: 'COMPARE_RESULT', results })
+          send({ type: 'COMPARE_RESULT', requestId: msg.payload.requestId, results })
         } catch (e) {
           const err = e as Error
-          send({ type: 'COMPARE_ERROR', message: err.message, stack: err.stack })
+          send({ type: 'COMPARE_ERROR', requestId: msg.payload.requestId, message: err.message, stack: err.stack })
         }
         break
       }

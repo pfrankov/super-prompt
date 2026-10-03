@@ -77,7 +77,10 @@ export async function addItems(datasetId: string, items: Omit<DatasetItem, 'id' 
 
 export async function updateItem(item: DatasetItem): Promise<void> {
   const d = await db()
-  await d.put('datasets_items', toPlainDatasetItem(item))
+  const tx = d.transaction('datasets_items', 'readwrite')
+  const existing = await tx.store.get(item.id)
+  if (existing && existing.datasetId === item.datasetId) await tx.store.put(toPlainDatasetItem(item))
+  await tx.done
 }
 
 export async function deleteItem(itemId: string): Promise<void> {
@@ -101,9 +104,23 @@ export async function getItems(
   datasetId: string,
   { offset = 0, limit = 50 }: { offset?: number; limit?: number } = {}
 ): Promise<DatasetItem[]> {
+  const start = Number.isFinite(offset) ? Math.max(0, Math.floor(offset)) : 0
+  const size = Number.isFinite(limit) ? Math.max(0, Math.floor(limit)) : 50
+  if (size === 0) return []
   const d = await db()
-  const all = await d.getAllFromIndex('datasets_items', 'by-datasetId', datasetId)
-  return all.slice(offset, offset + limit)
+  const tx = d.transaction('datasets_items', 'readonly')
+  const index = tx.store.index('by-datasetId')
+  let cursor = await index.openCursor(datasetId)
+  // advance skips index entries without materializing every skipped row. The
+  // existing index orders equal dataset keys by primary key, just like getAll.
+  if (cursor && start > 0) cursor = await cursor.advance(start)
+  const items: DatasetItem[] = []
+  while (cursor && items.length < size) {
+    items.push(cursor.value)
+    if (items.length < size) cursor = await cursor.continue()
+  }
+  await tx.done
+  return items
 }
 
 export async function getAllItems(datasetId: string): Promise<DatasetItem[]> {

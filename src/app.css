@@ -5,28 +5,28 @@
 
 :root {
   /* surfaces */
-  --bg-0: #10100f;
-  --bg-1: #171716;
-  --bg-2: #20201e;
-  --bg-3: #292925;
-  --bg-elevated: #303028;
+  --bg-0: #0b0f17;
+  --bg-1: #111722;
+  --bg-2: #192130;
+  --bg-3: #232e40;
+  --bg-elevated: #29364b;
 
   /* paper / ink */
-  --ink-1: #f1eee7;
-  --ink-2: #c8c1b3;
-  --ink-3: #918a7b;
-  --ink-4: #625d53;
+  --ink-1: #edf3ff;
+  --ink-2: #bac8df;
+  --ink-3: #8b9bb5;
+  --ink-4: #667892;
 
   /* pastel accents */
   --acc-rose: #e8aaa3;
-  --acc-peach: #eeb77c;
+  --acc-peach: #9caeff;
   --acc-mint: #9fcaad;
   --acc-sky: #9fbfd8;
 
   /* semantic */
   --primary: var(--acc-peach);
-  --primary-hover: #f3c18c;
-  --primary-fg: #18110a;
+  --primary-hover: #b4c2ff;
+  --primary-fg: #101831;
   --secondary: var(--acc-sky);
   --ok: var(--acc-mint);
   --warn: var(--acc-peach);
@@ -73,15 +73,15 @@
   /* motion */
   --ease: cubic-bezier(0.2, 0.8, 0.2, 1);
   --ease-out: cubic-bezier(0.16, 1, 0.3, 1);
-  --dur-fast: 200ms;
-  --dur-base: 400ms;
+  --dur-fast: 140ms;
+  --dur-base: 220ms;
 
   /* elevation */
   --shadow-1: 0 1px 0 rgba(255, 255, 255, 0.035) inset, 0 1px 2px rgba(0, 0, 0, 0.22);
   --shadow-2: 0 1px 0 rgba(255, 255, 255, 0.04) inset, 0 8px 18px rgba(0, 0, 0, 0.26);
   --shadow-3: 0 1px 0 rgba(255, 255, 255, 0.05) inset, 0 18px 38px rgba(0, 0, 0, 0.38);
   --shadow-modal: 0 24px 60px rgba(0, 0, 0, 0.6);
-  --shadow-glow: 0 0 0 1px rgba(238, 183, 124, 0.45), 0 8px 22px rgba(238, 183, 124, 0.12);
+  --shadow-glow: 0 0 0 1px rgba(156, 174, 255, 0.45), 0 8px 22px rgba(156, 174, 255, 0.12);
 
   /* z-index */
   --z-dropdown: 40;
@@ -129,23 +129,11 @@ body {
   font-size: var(--fs-md);
   line-height: var(--lh-base);
   color: var(--ink-1);
-  background:
-    linear-gradient(180deg, #11110f 0%, #10100f 42%, #0d0d0c 100%);
+  background: var(--bg-0);
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
   text-rendering: optimizeLegibility;
   font-feature-settings: "cv11", "ss01";
-}
-
-/* subtle fixed texture on bg-0 */
-body::before {
-  content: "";
-  position: fixed;
-  inset: 0;
-  pointer-events: none;
-  background-image: radial-gradient(rgba(241, 238, 231, 0.018) 1px, transparent 1px);
-  background-size: 4px 4px;
-  z-index: -1;
 }
 
 h1, h2, h3, h4, h5, h6 {
@@ -247,6 +235,8 @@ img, svg {
 
 /* selection */
 ::selection {
-  background: rgba(238, 183, 124, 0.3);
+  background: rgba(156, 174, 255, 0.3);
   color: var(--ink-1);
 }
+
+@keyframes surface-enter { from { opacity: 0; transform: translateY(4px); } to { opacity: 1; transform: translateY(0); } }
