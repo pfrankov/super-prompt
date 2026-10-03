@@ -1,5 +1,42 @@
 # Changelog
 
+## 0.3.0 — Focused prompt refinement
+
+### Changed
+- Added the selected SuperPrompt vector logo to both app headers and the favicon
+- Reorganized refinement into a guided editor and revision review, with progressive model setup, line-by-line changes, and one primary next action
+- Added durable run status and evaluation evidence; moved advanced options and candidate history behind disclosures
+- Updated the visual system with a quiet light canvas, precise typography, restrained motion, native dialogs, and keyboard navigation
+- Added guarded Undo for the last applied revision, retained across same-tab reload and invalidated by later edits
+- Paginated history and comparison choices, bounded dataset page reads, and deferred the editor bundle
+
+### Fixed
+- Failed settings drafts survive navigation in tab memory with unload protection, and storage failures after Stop remain visible instead of being treated as cancellation
+- Failed deletion preserves recovery drafts, data clearing is atomic, and cancelled intake cannot leave an unlinked dataset
+- Startup failures retain ownership until their terminal status is saved, including interrupted seed initialization
+- Recovered prompt drafts retry persistence and stay visibly unsaved on failure; field-level task writes preserve edits made from other task views
+- Failed Pause, Resume and Stop writes keep run ownership and expose recovery instead of allowing an ignored second run
+- Preflight and runtime use the same judge verdict contract, including winner and finite-score validation
+- Cancelled requests are excluded from evaluation evidence while completed results and returned usage remain recorded
+- Initial candidates survive stopping the first iteration, and worker crashes persist a terminal run status before another run can start
+- Settings save failures remain visible and retryable without publishing unsaved provider or language changes
+- A delayed editor download cannot interrupt typing or shift controls during a fallback-editor interaction
+- Stale tabs cannot silently save deleted tasks or create orphan runs and datasets; completed revisions reappear after another task's run finishes
+- Example fields keep a stable height while editing, so blur cannot move the next-page control out from under a click
+- Prompt-menu dismissal follows native disclosure state, including rapid reopen/Escape and focus changes
+- Randomized judge order no longer reverses user-facing A/B labels
+- Invalid judge responses no longer count as successful 5/5 ties
+- Mutation retries and failed-pair usage are included in reported token totals
+- Stop, comparison cancellation, request deadlines, retry waits, and worker recovery now respect their lifecycle
+- Prompt edits survive immediate navigation/reload; stale writes cannot recreate deleted tasks or examples
+- Generated examples cannot overwrite newly edited manual rows
+- JSON extraction preserves Markdown fences inside generated prompt strings
+
+### Validation
+- Expanded deterministic API, optimizer, worker, and real IndexedDB regression coverage
+- Added exact-head browser CI, synthetic desktop/mobile workflows, and paired baseline/candidate performance evidence
+- No data-schema migration, live model calls, or real model-quality claims
+
 ## 0.2.0 — UI/UX polish + i18n pass
 
 ### Added

@@ -31,6 +31,7 @@ export interface ChatResponse {
 
 /** Single call to a /chat/completions endpoint. No retry — wrap with withBackoff. */
 export async function chatCompletion(req: ChatRequest): Promise<ChatResponse> {
+  req.signal?.throwIfAborted()
   if (isMockProviderUrl(req.baseUrl)) {
     return mockChatCompletion(req)
   }
@@ -38,6 +39,7 @@ export async function chatCompletion(req: ChatRequest): Promise<ChatResponse> {
 }
 
 async function chatCompletionNetwork(req: ChatRequest): Promise<ChatResponse> {
+  req.signal?.throwIfAborted()
   const url = req.baseUrl.replace(/\/$/, '') + '/chat/completions'
 
   const headers: Record<string, string> = { 'Content-Type': 'application/json' }
@@ -54,27 +56,36 @@ async function chatCompletionNetwork(req: ChatRequest): Promise<ChatResponse> {
 
   const timeoutMs = req.timeoutMs ?? 60_000
   const ctrl = new AbortController()
-  const timer = setTimeout(() => ctrl.abort(), timeoutMs)
-  const signal = req.signal ?? ctrl.signal
+  const onAbort = () => ctrl.abort(req.signal?.reason)
+  req.signal?.addEventListener('abort', onAbort, { once: true })
+  let timedOut = false
+  const timer = setTimeout(() => {
+    timedOut = true
+    ctrl.abort(new DOMException('Request timed out', 'TimeoutError'))
+  }, timeoutMs)
 
   let resp: Response
+  let text: string
   try {
     resp = await fetch(url, {
       method: 'POST',
       headers,
       body: JSON.stringify(body),
-      signal,
+      signal: ctrl.signal,
     })
+    // Fetch resolves at headers; its deadline must also cover the body read.
+    text = await resp.text()
+    ctrl.signal.throwIfAborted()
   } catch (e) {
-    clearTimeout(timer)
-    if ((e as Error).name === 'AbortError') {
+    req.signal?.throwIfAborted()
+    if (timedOut) {
       throw new ApiError({ status: 408, message: 'Request timed out', retriable: true, cause: e })
     }
     throw new ApiError({ status: 0, message: 'Network error', retriable: true, cause: e })
+  } finally {
+    clearTimeout(timer)
+    req.signal?.removeEventListener('abort', onAbort)
   }
-  clearTimeout(timer)
-
-  const text = await resp.text()
   let json: unknown
   try {
     json = text ? JSON.parse(text) : {}
@@ -202,5 +213,6 @@ export async function chatCompletionWithRetry(
     baseMs: 500,
     capMs: 8000,
     onRetry,
+    signal: req.signal,
   })
 }

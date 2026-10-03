@@ -1,5 +1,6 @@
 <script lang="ts">
   import { _ } from 'svelte-i18n'
+  import { onDestroy } from 'svelte'
   import Dialog from '../ui/Dialog.svelte'
   import Button from '../ui/Button.svelte'
   import Tag from '../ui/Tag.svelte'
@@ -16,21 +17,27 @@
     items,
   }: { open?: boolean; taskId: string; config: RunConfig; initialPromptA?: string; initialPromptB?: string; items: DatasetItem[] } = $props()
 
+  onDestroy(resetComparison)
   let promptA = $state('')
   let promptB = $state('')
   let selected = $state<string[]>([])
+  let offset = $state(0)
+  const pageSize = 20
+  const selectedSet = $derived(new Set(selected))
+  const pageItems = $derived(items.slice(offset, offset + pageSize))
 
   $effect(() => {
     if (open) {
       promptA = initialPromptA
       promptB = initialPromptB
       selected = items.map((i) => i.id)
+      offset = 0
       resetComparison()
     }
   })
 
   function toggle(id: string) {
-    selected = selected.includes(id) ? selected.filter((x) => x !== id) : [...selected, id]
+    selected = selectedSet.has(id) ? selected.filter((x) => x !== id) : [...selected, id]
   }
   function selectAll() { selected = items.map((i) => i.id) }
   function selectNone() { selected = [] }
@@ -48,14 +55,15 @@
     if (!lastCompare) return null
     let aWins = 0, bWins = 0, ties = 0
     let scoreA = 0, scoreB = 0
-    for (const r of lastCompare) {
+    const valid = lastCompare.filter((r) => !r.errorMessage)
+    for (const r of valid) {
       scoreA += r.verdict.scoreA; scoreB += r.verdict.scoreB
       if (r.verdict.winner === 'A') aWins++
       else if (r.verdict.winner === 'B') bWins++
       else ties++
     }
-    const n = Math.max(1, lastCompare.length)
-    return { aWins, bWins, ties, scoreA: scoreA / n, scoreB: scoreB / n, n }
+    const n = Math.max(1, valid.length)
+    return { aWins, bWins, ties, scoreA: scoreA / n, scoreB: scoreB / n, n: valid.length, failed: lastCompare.length - valid.length }
   })
 </script>
 
@@ -78,11 +86,11 @@
       </div>
     </div>
     <div class="list">
-      {#each items as it (it.id)}
+      {#each pageItems as it (it.id)}
         <label class="item-row">
           <input
             type="checkbox"
-            checked={selected.includes(it.id)}
+            checked={selectedSet.has(it.id)}
             onchange={() => toggle(it.id)}
           />
           <span class="item-input">{it.input}</span>
@@ -91,6 +99,7 @@
     </div>
   </div>
 
+  <div class="pagination"><Button size="sm" variant="ghost" onclick={() => offset = Math.max(0, offset - pageSize)} disabled={offset === 0}>{$_('common.back')}</Button><span>{$_('workspace.shownExamples', { values:{from:items.length ? offset + 1 : 0,to:Math.min(offset + pageSize,items.length),total:items.length} })}</span><Button size="sm" variant="ghost" onclick={() => offset += pageSize} disabled={offset + pageSize >= items.length}>{$_('common.next')}</Button></div>
   <div class="actions-row">
     <Button onclick={run} loading={running} disabled={running || !promptA.trim() || !promptB.trim() || selected.length === 0}>
       {$_('compare.run')}
@@ -104,6 +113,7 @@
   {#if stats && lastCompare}
     <div class="results">
       <h4>{$_('compare.results')}</h4>
+      {#if stats.failed}<p class="err">{$_('workspace.failedPairs', { values:{count:stats.failed} })}</p>{/if}
       <div class="score-row">
         <Tag tone={stats.aWins > stats.bWins ? 'ok' : 'neutral'}>
           {$_('compare.winnerA')}: {stats.aWins}/{stats.n}
@@ -117,11 +127,12 @@
       <details>
         <summary class="dim">{$_('compare.perItem.title', { values: { n: lastCompare.length } })}</summary>
         <ol class="verdicts">
-          {#each lastCompare as r, i (i)}
+          {#each lastCompare.slice(0, 50) as r, i (i)}
             <li>
               <span class="v">{$_('compare.perItem.winner', { values: { w: r.verdict.winner } })}</span>
               <span class="dim">{$_('compare.perItem.scores', { values: { a: r.verdict.scoreA, b: r.verdict.scoreB } })}</span>
-              <span class="reason">{r.verdict.reasoning}</span>
+              <span class="reason">{r.errorMessage || r.verdict.reasoning}</span>
+              {#if r.abSwapped}<span class="dim">{$_('workspace.reversedJudge')}</span>{/if}
             </li>
           {/each}
         </ol>
@@ -135,6 +146,7 @@
 </Dialog>
 
 <style>
+  .pagination { display:flex; justify-content:space-between; align-items:center; gap:8px; color:var(--ink-3); font-size:12px; margin:8px 0; }
   .form { display: grid; grid-template-columns: 1fr 1fr; gap: var(--s-3); margin-bottom: var(--s-4); }
   .col { display: flex; flex-direction: column; }
   .items { margin-bottom: var(--s-3); }
@@ -156,5 +168,6 @@
   .verdicts { padding-left: var(--s-4); margin: var(--s-2) 0 0; max-height: 200px; overflow-y: auto; }
   .verdicts li { padding: 4px 0; display: flex; gap: var(--s-2); flex-wrap: wrap; font-size: var(--fs-sm); }
   .v { font-weight: 600; }
+  @media(max-width:600px) { .form { grid-template-columns:1fr; } }
   .reason { color: var(--ink-2); flex: 1 1 100%; }
 </style>
