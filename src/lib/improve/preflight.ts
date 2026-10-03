@@ -3,7 +3,7 @@ import { chatCompletionWithRetry } from '../api/openaiLike'
 import { tryParseJson } from '../optimizer/extract-json'
 import { judgeSystemPrompt } from '../optimizer/prompts/judgeSystem'
 import { mutatorSystemPrompt } from '../optimizer/prompts/mutatorSystem'
-import { judgeRoute } from '../optimizer/judge'
+import { judgeRoute, parseJudgeVerdict } from '../optimizer/judge'
 import { isRunnableProvider } from './model-routing'
 
 export type PreflightKey = 'provider' | 'target' | 'judgeJson' | 'mutatorJson'
@@ -60,17 +60,13 @@ function firstItem(items: DatasetItem[]): DatasetItem {
   }
 }
 
-function parseJudgeJson(text: string): boolean {
-  const parsed = tryParseJson<Record<string, unknown>>(text)
-  return !!parsed && typeof parsed.scoreA === 'number' && typeof parsed.scoreB === 'number'
-}
-
 function parseMutatorJson(text: string): boolean {
   const parsed = tryParseJson<Record<string, unknown>>(text)
   return !!parsed && typeof parsed.newPrompt === 'string' && parsed.newPrompt.trim().length > 0
 }
 
 export async function runPreflight(args: RunPreflightArgs): Promise<PreflightResult> {
+  args.signal?.throwIfAborted()
   const steps: PreflightStep[] = []
 
   if (!isRunnableProvider(args.provider)) {
@@ -95,12 +91,14 @@ export async function runPreflight(args: RunPreflightArgs): Promise<PreflightRes
       signal: args.signal,
       rateLimits: args.provider.modelRateLimits,
     }, args.provider.maxRetries)
+    args.signal?.throwIfAborted()
     if (target.text.trim()) {
       steps.push(ok('target', 'Target model returned a non-empty answer.'))
     } else {
       steps.push(fail('target', 'Target model returned empty content.', 'Choose another target model or increase the model output limit.'))
     }
   } catch (e) {
+    args.signal?.throwIfAborted()
     steps.push(fail('target', e instanceof Error ? e.message : 'Target model failed.', 'Choose a reachable target model.'))
   }
 
@@ -138,12 +136,14 @@ export async function runPreflight(args: RunPreflightArgs): Promise<PreflightRes
       signal: args.signal,
       rateLimits: args.provider.modelRateLimits,
     }, args.provider.maxRetries)
-    if (parseJudgeJson(judge.text)) {
-      steps.push(ok('judgeJson', 'Judge returns parseable JSON.'))
+    args.signal?.throwIfAborted()
+    if (parseJudgeVerdict(judge.text)) {
+      steps.push(ok('judgeJson', 'Judge returns a valid JSON verdict.'))
     } else {
-      steps.push(fail('judgeJson', 'Judge did not return parseable scores.', 'Use a JSON-stable judge model.'))
+      steps.push(fail('judgeJson', 'Judge did not return valid scores and an A/B/tie winner.', 'Use a JSON-stable judge model.'))
     }
   } catch (e) {
+    args.signal?.throwIfAborted()
     steps.push(fail('judgeJson', e instanceof Error ? e.message : 'Judge check failed.', 'Use a reachable judge model.'))
   }
 
@@ -180,12 +180,14 @@ export async function runPreflight(args: RunPreflightArgs): Promise<PreflightRes
       signal: args.signal,
       rateLimits: args.provider.modelRateLimits,
     }, args.provider.maxRetries)
+    args.signal?.throwIfAborted()
     if (parseMutatorJson(mutator.text)) {
       steps.push(ok('mutatorJson', 'Mutator returns parseable JSON.'))
     } else {
       steps.push(fail('mutatorJson', 'Mutator did not return a newPrompt JSON field.', 'Use the same JSON-stable model for judge and mutator.'))
     }
   } catch (e) {
+    args.signal?.throwIfAborted()
     steps.push(fail('mutatorJson', e instanceof Error ? e.message : 'Mutator check failed.', 'Use a reachable mutator model.'))
   }
 

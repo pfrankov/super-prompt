@@ -1,6 +1,15 @@
 import { db } from './db'
 import type { Task } from '../types'
 import { newId } from '../util/id'
+import { storeAppliedRevision } from '../improve/applied-revision'
+import { readPromptDraft, clearPromptDraft } from './prompt-drafts'
+
+export class TaskNotFoundError extends Error {
+  constructor(readonly taskId: string) {
+    super('This prompt no longer exists. Return to your prompts and open an existing one.')
+    this.name = 'TaskNotFoundError'
+  }
+}
 
 export async function listTasks(): Promise<Task[]> {
   const d = await db()
@@ -10,13 +19,22 @@ export async function listTasks(): Promise<Task[]> {
 
 export async function getTask(id: string): Promise<Task | undefined> {
   const d = await db()
-  return d.get('tasks', id)
+  const task = await d.get('tasks', id)
+  const draft = readPromptDraft(id)
+  return task && draft !== null ? { ...task, initialPrompt: draft } : task
 }
 
 export async function saveTask(t: Task): Promise<void> {
   const d = await db()
   const next = { ...t, updatedAt: Date.now() }
-  await d.put('tasks', next)
+  const tx = d.transaction('tasks', 'readwrite')
+  if (!await tx.store.get(t.id)) {
+    await tx.done
+    throw new TaskNotFoundError(t.id)
+  }
+  await tx.store.put(next)
+  await tx.done
+  clearPromptDraft(t.id, t.initialPrompt)
 }
 
 export async function createTask(partial: Partial<Task> = {}): Promise<Task> {
@@ -33,11 +51,14 @@ export async function createTask(partial: Partial<Task> = {}): Promise<Task> {
     createdAt: now,
     updatedAt: now,
   }
-  await saveTask(t)
+  const d = await db()
+  await d.put('tasks', t)
   return t
 }
 
 export async function deleteTask(id: string): Promise<void> {
+  clearPromptDraft(id)
+  storeAppliedRevision(id, null)
   const d = await db()
   const tx = d.transaction(
     ['tasks', 'datasets', 'datasets_items', 'runs', 'candidates', 'iterations', 'pairs'],
