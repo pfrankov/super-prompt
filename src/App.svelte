@@ -8,7 +8,6 @@
   import { t } from './stores/toast'
   import { _ } from 'svelte-i18n'
 
-  // Placeholder TaskDetail — filled in Phase C/E
   import TaskDetail from './routes/TaskDetail.svelte'
 
   async function onCreateTask() {
@@ -23,7 +22,7 @@
     <Home {onCreateTask} />
   {:else if $route.name === 'task'}
     {#key $route.id}
-      <TaskDetail taskId={$route.id} initialTab={$route.tab ?? 'overview'} />
+      <TaskDetail taskId={$route.id} initialTab={$route.tab ?? 'improve'} />
     {/key}
   {:else if $route.name === 'settings'}
     <Settings />

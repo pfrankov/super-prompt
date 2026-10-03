@@ -1,4 +1,4 @@
-import type { ProviderConfig } from '../types'
+import type { ArbitratorConfig, ProviderConfig } from '../types'
 import { isMockProviderUrl, mockModelList } from '../api/mockOpenai'
 
 export type ProviderKind = 'local' | 'cloud'
@@ -16,7 +16,7 @@ export function providerKindFromBaseUrl(baseUrl: string): ProviderKind {
   if (isMockProviderUrl(baseUrl)) return 'local'
   try {
     const host = new URL(baseUrl).hostname
-    return host === 'localhost' || host === '127.0.0.1' || host === '::1' ? 'local' : 'cloud'
+    return host === 'localhost' || host === '127.0.0.1' || host === '[::1]' ? 'local' : 'cloud'
   } catch {
     return 'cloud'
   }
@@ -24,8 +24,21 @@ export function providerKindFromBaseUrl(baseUrl: string): ProviderKind {
 
 export function isRunnableProvider(provider: Pick<ProviderConfig, 'baseUrl' | 'apiKey'>): boolean {
   if (isMockProviderUrl(provider.baseUrl)) return true
-  if (provider.apiKey.trim()) return true
-  return providerKindFromBaseUrl(provider.baseUrl) === 'local'
+  try {
+    const url = new URL(provider.baseUrl)
+    if (!['http:', 'https:'].includes(url.protocol) || url.username || url.password) return false
+  } catch { return false }
+  return !!provider.apiKey.trim() || providerKindFromBaseUrl(provider.baseUrl) === 'local'
+}
+
+/** Validate the roles actually used, without requiring an unused fallback model. */
+export function isRunnableModelSetup(
+  provider: Pick<ProviderConfig, 'baseUrl' | 'apiKey' | 'targetModel' | 'judgeModel'>,
+  arbitrator?: ArbitratorConfig
+): boolean {
+  if (!isRunnableProvider(provider) || !provider.targetModel.trim()) return false
+  if (arbitrator?.enabled) return !!arbitrator.model.trim() && isRunnableProvider(arbitrator)
+  return !!provider.judgeModel.trim()
 }
 
 export function normalizeModelList(models: string[]): string[] {
