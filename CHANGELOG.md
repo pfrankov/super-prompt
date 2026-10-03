@@ -1,5 +1,27 @@
 # Changelog
 
+## 0.3.0 — Focused prompt refinement
+
+### Changed
+- Reorganized refinement around side-by-side current/result prompts and direct target/arbiter configuration
+- Added durable run status and evaluation evidence; moved advanced options and candidate history behind disclosures
+- Updated the visual system with a cooler graphite palette, restrained motion, native dialogs, and keyboard tab focus
+- Paginated history and comparison choices, bounded dataset page reads, and deferred the editor bundle
+
+### Fixed
+- Randomized judge order no longer reverses user-facing A/B labels
+- Invalid judge responses no longer count as successful 5/5 ties
+- Mutation retries and failed-pair usage are included in reported token totals
+- Stop, comparison cancellation, request deadlines, retry waits, and worker recovery now respect their lifecycle
+- Prompt edits survive immediate navigation/reload; stale writes cannot recreate deleted tasks or examples
+- Generated examples cannot overwrite newly edited manual rows
+- JSON extraction preserves Markdown fences inside generated prompt strings
+
+### Validation
+- Expanded deterministic API, optimizer, worker, and real IndexedDB regression coverage
+- Added exact-head browser CI, synthetic desktop/mobile workflows, and paired baseline/candidate performance evidence
+- No data-schema migration, live model calls, or real model-quality claims
+
 ## 0.2.0 — UI/UX polish + i18n pass
 
 ### Added

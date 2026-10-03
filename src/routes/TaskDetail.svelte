@@ -14,8 +14,9 @@
   import { navigate } from '../stores/router'
   import { t } from '../stores/toast'
   import { deleteTask } from '../lib/db/tasks'
+  import { activeRunId, optimizationState } from '../stores/worker'
 
-  let { taskId, initialTab = 'overview' }: { taskId: string; initialTab?: string } = $props()
+  let { taskId, initialTab = 'improve' }: { taskId: string; initialTab?: string } = $props()
 
   let task: Task | null = $state(null)
   let tab = $state('improve')
@@ -37,11 +38,10 @@
     task = found
   }
 
-  onMount(load)
   $effect(() => { taskId; load() })
 
   async function onDelete() {
-    if (!task) return
+    if (!task || $activeRunId && $optimizationState.run?.taskId === task.id) return
     const id = task.id
     await deleteTask(id)
     t.success($_('toast.deleted'))
@@ -60,7 +60,7 @@
       title={task.name || $_('common.untitled')}
       subtitle={task.description}
     >
-      <Button variant="danger" size="sm" onclick={() => (deleteOpen = true)}>{$_('common.delete')}</Button>
+      <Button variant="ghost" size="sm" disabled={!!$activeRunId && $optimizationState.run?.taskId === task.id} onclick={() => (deleteOpen = true)}>{$_('common.delete')}</Button>
     </TopBar>
 
     <Tabs
@@ -74,7 +74,7 @@
       onchange={onTabChange}
     />
 
-    <div class="tab-pane" aria-busy={false}>
+    <div class="tab-pane" role="tabpanel" id="task-panel" aria-labelledby={`tab-${tab}`} tabindex="0" aria-busy={false}>
       {#if tab === 'improve'}
         <ImproveWorkspace bind:task={task as Task} />
       {:else if tab === 'overview'}

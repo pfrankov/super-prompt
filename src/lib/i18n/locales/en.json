@@ -1,7 +1,7 @@
 {
   "app": {
     "title": "Super-Prompt",
-    "subtitle": "Optimize Anything"
+    "subtitle": "Prompt refinement lab"
   },
   "nav": {
     "tasks": "Prompts",
@@ -37,7 +37,8 @@
     "unsaved": "Unsaved changes",
     "dropHere": "Drop your file here",
     "invalidType": "Unsupported file type. Use .jsonl, .ndjson, .csv, or .tsv.",
-    "saving": "Saving…"
+    "saving": "Saving…",
+    "retry": "Try again"
   },
   "home": {
     "title": "Prompts",
@@ -348,10 +349,13 @@
     "source": {
       "seed": "seed",
       "mutated": "mutated"
-    }
+    },
+    "topCandidates": "Top scored candidates",
+    "noScoredCandidates": "No scored candidates yet",
+    "pageRange": "{from}–{to} of {total} runs"
   },
   "sidebar": {
-    "version": "v0.1"
+    "version": "v0.3.0"
   },
   "compare": {
     "title": "Compare A vs B",
@@ -424,7 +428,8 @@
     "modelRateLimitRpm": "Requests/min",
     "modelRateLimitAdd": "Add rule",
     "modelRateLimitAddCurrent": "Add current models",
-    "modelRateLimitRemove": "Remove"
+    "modelRateLimitRemove": "Remove",
+    "useDemo": "Use demo"
   },
   "errors": {
     "network": "Network error",
@@ -451,5 +456,55 @@
     "createTask": "Create task",
     "addItem": "Add",
     "deleteRow": "Delete row"
+  },
+  "workspace": {
+    "modelsTitle": "Configure models",
+    "modelsIntro": "Choose the model you want to improve and the arbiter that evaluates its answers.",
+    "demoHelp": "Try the full workflow locally, with no API calls.",
+    "targetRole": "01 / Target",
+    "targetHelp": "This model answers using your prompt.",
+    "arbiterRole": "02 / Arbiter",
+    "arbiterHelp": "Scores the answers and proposes a better prompt.",
+    "separateArbiter": "Use a separate provider for the arbiter",
+    "arbiterUrl": "Arbiter base URL",
+    "arbiterKey": "Arbiter API key",
+    "arbiterModel": "Arbiter model",
+    "keyStorage": "Keys stay in this browser’s IndexedDB in plain text. They are sent only to the provider you configure.",
+    "saveModels": "Save models",
+    "configure": "Configure models",
+    "ready": "Configured · not yet tested",
+    "needsSetup": "Set up your models to begin",
+    "demo": "Demo · simulated scores",
+    "current": "Your prompt",
+    "currentHelp": "Describe what a good answer should do. Your edits are saved automatically.",
+    "result": "Best evaluated prompt",
+    "resultHelp": "Review the result before making it your current prompt.",
+    "empty": "A better version starts here",
+    "emptyHelp": "The arbiter will compare answers on your examples, then keep the strongest evaluated candidate.",
+    "autoExamples": "We’ll create test examples if you don’t have any yet.",
+    "details": "Examples & run options",
+    "why": "Evaluation evidence",
+    "change": "Proposed change",
+    "feedback": "Judge feedback from the candidate’s comparison",
+    "scoreHelp": "Average judge score on sampled examples, on a 0–10 scale. This is not a guarantee of real-world quality.",
+    "trials": "{count} evaluated pairs · {wins} wins · {losses} losses · {ties} ties",
+    "runDetails": "Run details & candidates",
+    "cancel": "Cancel preparation",
+    "activeElsewhere": "Another prompt is running. Stop or finish it before starting a new run.",
+    "openActive": "Open active prompt",
+    "saved": "Saved locally",
+    "saving": "Saving…",
+    "saveFailed": "Could not save. Keep this page open and try again.",
+    "provisional": "Run is still in progress. This result may change.",
+    "noResult": "No valid evaluation yet",
+    "name": "Prompt name",
+    "moreCandidates": "Show more candidates",
+    "candidatePage": "Showing {count} of {total} candidates",
+    "failedPairs": "{count} failed pairs excluded",
+    "comparisonCount": "{count} selected examples",
+    "shownExamples": "Showing {from}–{to} of {total} examples",
+    "runFinished": "Run finished",
+    "stopHelp": "Stop cancels pending requests. Your provider may still charge for work already started.",
+    "reversedJudge": "The judge saw A/B in reversed order; quoted reasoning uses that order."
   }
 }

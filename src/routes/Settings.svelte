@@ -8,6 +8,7 @@
   import Dialog from '../components/ui/Dialog.svelte'
   import { settings, saveSettings, setLang } from '../stores/settings'
   import { wipeAll } from '../lib/db/db'
+  import { activeRunId } from '../stores/worker'
   import { t } from '../stores/toast'
   import { listProviderModels, selectJudgeModel } from '../lib/improve/model-routing'
   import { MOCK_JUDGE_MODEL, MOCK_PROVIDER_URL, MOCK_TARGET_MODEL } from '../lib/api/mockOpenai'
@@ -242,7 +243,7 @@
   }
 
   async function doWipe() {
-    if (wipeConfirm !== 'DELETE') return
+    if (wipeConfirm !== 'DELETE' || $activeRunId) return
     await wipeAll()
     wipeOpen = false
     wipeConfirm = ''
@@ -480,7 +481,7 @@
     <h3>{$_('settings.danger')}</h3>
     <p class="muted">{$_('settings.wipe')}</p>
     <div class="row">
-      <Button variant="danger" onclick={openWipe}>{$_('settings.wipe')}</Button>
+      <Button variant="danger" disabled={!!$activeRunId} onclick={openWipe}>{$_('settings.wipe')}</Button>
     </div>
   </section>
 </div>

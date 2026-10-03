@@ -1,4 +1,5 @@
 import { ApiError } from './errors'
+import { abortableDelay, waitWithSignal } from './abort'
 import type { ModelRateLimitRule } from '../types'
 
 export interface ModelRoute {
@@ -6,6 +7,7 @@ export interface ModelRoute {
   apiKey: string
   model: string
   rateLimits?: ModelRateLimitRule[]
+  signal?: AbortSignal
 }
 
 interface RateLimitBody {
@@ -45,14 +47,15 @@ export function modelRouteKey(route: ModelRoute): string {
 }
 
 export async function withModelRateLimit<T>(route: ModelRoute, fn: () => Promise<T>): Promise<T> {
+  route.signal?.throwIfAborted()
   const key = modelRouteKey(route)
   const state = stateFor(key)
   const rule = matchingModelRateLimit(route.model, route.rateLimits)
   const run = async () => {
     assertReady(route, state)
-    if (rule) await waitForConfiguredSlot(rule, state)
+    if (rule) await waitForConfiguredSlot(rule, state, route.signal)
     assertReady(route, state)
-    await waitForGlobalSlot()
+    await waitForGlobalSlot(route.signal)
     assertReady(route, state)
     try {
       return await fn()
@@ -64,18 +67,21 @@ export async function withModelRateLimit<T>(route: ModelRoute, fn: () => Promise
   if (!rule) return run()
   const pending = state.tail.then(run, run)
   state.tail = pending.catch(() => undefined)
-  return pending
+  return waitWithSignal(pending, route.signal)
 }
 
-function waitForGlobalSlot(): Promise<void> {
-  const pending = globalTail.then(waitForDefaultInterval, waitForDefaultInterval)
+function waitForGlobalSlot(signal?: AbortSignal): Promise<void> {
+  const wait = () => waitForDefaultInterval(signal)
+  const pending = globalTail.then(wait, wait)
   globalTail = pending.catch(() => undefined)
-  return pending
+  return waitWithSignal(pending, signal)
 }
 
-async function waitForDefaultInterval(): Promise<void> {
+async function waitForDefaultInterval(signal?: AbortSignal): Promise<void> {
+  signal?.throwIfAborted()
   const remainingMs = globalNextRequestAt - Date.now()
-  if (remainingMs > 0) await sleep(remainingMs)
+  if (remainingMs > 0) await abortableDelay(remainingMs, signal)
+  signal?.throwIfAborted()
   globalNextRequestAt = Date.now() + DEFAULT_GLOBAL_INTERVAL_MS
 }
 
@@ -102,9 +108,11 @@ export function matchingModelRateLimit(
   )) ?? null
 }
 
-async function waitForConfiguredSlot(rule: ModelRateLimitRule, state: RouteState): Promise<void> {
+async function waitForConfiguredSlot(rule: ModelRateLimitRule, state: RouteState, signal?: AbortSignal): Promise<void> {
+  signal?.throwIfAborted()
   const remainingMs = state.nextRequestAt - Date.now()
-  if (remainingMs > 0) await sleep(remainingMs)
+  if (remainingMs > 0) await abortableDelay(remainingMs, signal)
+  signal?.throwIfAborted()
   state.nextRequestAt = Date.now() + intervalMs(rule)
 }
 
@@ -113,11 +121,8 @@ function intervalMs(rule: ModelRateLimitRule): number {
   return Math.ceil(60_000 / requestsPerMinute)
 }
 
-function sleep(ms: number): Promise<void> {
-  return new Promise((resolve) => setTimeout(resolve, ms))
-}
-
 function assertReady(route: ModelRoute, state: RouteState) {
+  route.signal?.throwIfAborted()
   const remainingMs = state.cooldownUntil - Date.now()
   if (remainingMs <= 0) return
   const seconds = Math.max(1, Math.ceil(remainingMs / 1000))

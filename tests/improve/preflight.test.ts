@@ -1,5 +1,6 @@
-import { describe, expect, it, vi } from 'vitest'
-import { nextPreflightAction, preflightReady, runPreflight, type PreflightStep } from '../../src/lib/improve/preflight'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+import { clearModelRateLimits } from '../../src/lib/api/modelRateLimit'
+import { nextPreflightAction, preflightReady, runPreflight, type PreflightStep, type RunPreflightArgs } from '../../src/lib/improve/preflight'
 
 describe('preflight status mapping', () => {
   it('is ready when there are no failing steps', () => {
@@ -80,5 +81,70 @@ describe('preflight status mapping', () => {
     expect(result.ready).toBe(true)
     expect(fetchMock).toHaveBeenCalledTimes(3)
     expect(fetchMock.mock.calls.every(([url]) => String(url).endsWith('/chat/completions'))).toBe(true)
+  })
+})
+
+describe('preflight cancellation', () => {
+  const args: RunPreflightArgs = {
+    provider: {
+      id: 'p', label: 'Provider', baseUrl: 'https://provider.test/v1', apiKey: 'test-key',
+      targetModel: 'target', judgeModel: 'judge', requestTimeoutMs: 2000, maxRetries: 0,
+    },
+    task: {
+      id: 't', name: 'Task', description: 'Test task', initialPrompt: 'Answer briefly', seedPrompts: [],
+      rubric: { text: 'Return useful answers' }, datasetId: 'd', providerId: null, createdAt: 0, updatedAt: 0,
+    },
+    items: [],
+  }
+
+  beforeEach(() => {
+    vi.useFakeTimers()
+    clearModelRateLimits()
+    vi.stubGlobal('fetch', vi.fn())
+  })
+  afterEach(() => {
+    clearModelRateLimits()
+    vi.clearAllTimers()
+    vi.useRealTimers()
+    vi.unstubAllGlobals()
+  })
+
+  it('rejects before checking an already-cancelled run', async () => {
+    const controller = new AbortController()
+    controller.abort()
+    const result = runPreflight({ ...args, signal: controller.signal }).catch((error: unknown) => error)
+    await vi.dynamicImportSettled()
+    await vi.advanceTimersByTimeAsync(5000)
+    expect(await result).toBe(controller.signal.reason)
+    expect(fetch).not.toHaveBeenCalled()
+  })
+
+  it.each([1, 2, 3])('propagates cancellation in stage %i without advancing', async (stage) => {
+    const controller = new AbortController()
+    const responses = ['ok', JSON.stringify({ scoreA: 8, scoreB: 4 }), JSON.stringify({ newPrompt: 'Better prompt' })]
+    vi.mocked(fetch).mockImplementation(async (_url, init) => {
+      const index = vi.mocked(fetch).mock.calls.length - 1
+      if (index + 1 === stage) {
+        return new Promise<Response>((_resolve, reject) => {
+          const signal = init!.signal!
+          if (signal.aborted) reject(signal.reason)
+          else signal.addEventListener('abort', () => reject(signal.reason), { once: true })
+        })
+      }
+      return new Response(JSON.stringify({ choices: [{ message: { content: responses[index] } }] }))
+    })
+    let outcome: unknown
+    void runPreflight({ ...args, signal: controller.signal }).then(
+      (result) => { outcome = result },
+      (error: unknown) => { outcome = error },
+    )
+    await vi.dynamicImportSettled()
+    await vi.advanceTimersByTimeAsync((stage - 1) * 500)
+    expect(fetch).toHaveBeenCalledTimes(stage)
+    controller.abort(new Error('Cancel preflight'))
+    await vi.advanceTimersByTimeAsync(0)
+    expect(outcome).toBe(controller.signal.reason)
+    await vi.advanceTimersByTimeAsync(5000)
+    expect(fetch).toHaveBeenCalledTimes(stage)
   })
 })

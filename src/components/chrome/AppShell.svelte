@@ -18,14 +18,14 @@
   })
 </script>
 
-<a class="skip" href="#main">Skip to main content</a>
+<a class="skip" href="#main" onclick={(e) => { e.preventDefault(); document.getElementById('main')?.focus() }}>Skip to main content</a>
 
 <div class="shell">
   <div class="desktop-only">
     <Sidebar {onCreateTask} />
   </div>
 
-  <main id="main">
+  <main id="main" tabindex="-1">
     <div class="mobile-bar">
       <Button size="sm" variant="ghost" onclick={() => (drawerOpen = true)} aria-label="Open menu">
         <svg viewBox="0 0 20 20" width="18" height="18" aria-hidden="true">
@@ -47,12 +47,12 @@
 <style>
   .shell {
     display: grid;
-    grid-template-columns: 244px minmax(0, 1fr);
+    grid-template-columns: 200px minmax(0, 1fr);
     min-height: 100dvh;
   }
   main {
     min-width: 0;
-    padding: var(--s-6) clamp(var(--s-5), 3vw, var(--s-12));
+    padding: var(--s-6) clamp(var(--s-4), 2vw, var(--s-8));
     background: transparent;
   }
   .desktop-only { display: block; }

@@ -28,13 +28,25 @@ export const comparisonState = writable<{
   error: '',
 })
 
+let comparisonRequestId = 0
+
 export function resetComparison(): void {
+  comparisonRequestId++
+  worker?.postMessage({ type: 'CANCEL_COMPARE' } satisfies MainToWorker)
   comparisonState.set({ running: false, results: null, error: '' })
 }
 
 let worker: Worker | null = null
+export const activeRunId = writable<string | null>(null)
 let runActive = false
 let settingsSyncTimer: number | undefined
+
+function disposeWorker(): void {
+  worker?.terminate()
+  worker = null
+  if (settingsSyncTimer) clearTimeout(settingsSyncTimer)
+  settingsSyncTimer = undefined
+}
 
 function ensureWorker(): Worker {
   if (!worker) {
@@ -44,6 +56,8 @@ function ensureWorker(): Worker {
     worker.onmessage = onWorkerMessage
     worker.onerror = (e) => {
       console.error('[worker]', e)
+      disposeWorker()
+      onWorkerMessage({ data: { type: 'ERROR', message: e.message || 'Worker failed' } } as MessageEvent<WorkerToMain>)
     }
   }
   return worker
@@ -82,6 +96,7 @@ function onWorkerMessage(e: MessageEvent<WorkerToMain>) {
       break
     case 'ERROR':
       runActive = false
+      activeRunId.set(null)
       optimizationState.update((s) => ({
         ...s,
         run: s.run
@@ -98,11 +113,14 @@ function onWorkerMessage(e: MessageEvent<WorkerToMain>) {
       break
     case 'DONE':
       runActive = false
+      activeRunId.set(null)
       break
     case 'COMPARE_RESULT':
+      if (msg.requestId !== comparisonRequestId) break
       comparisonState.set({ running: false, results: msg.results, error: '' })
       break
     case 'COMPARE_ERROR':
+      if (msg.requestId !== comparisonRequestId) break
       comparisonState.set({ running: false, results: null, error: msg.message })
       break
   }
@@ -116,7 +134,7 @@ settings.subscribe((s) => {
   if (settingsSyncTimer) clearTimeout(settingsSyncTimer)
   settingsSyncTimer = window.setTimeout(() => {
     const run = get(optimizationState).run
-    if (!run) return
+    if (!run || !runActive || !worker) return
     worker!.postMessage({
       type: 'UPDATE_SETTINGS',
       payload: { provider: s.provider, arbitrator: s.arbitrator, config: run.config },
@@ -125,8 +143,17 @@ settings.subscribe((s) => {
 })
 
 export function start(runId: string): void {
+  if (get(activeRunId)) return
+  activeRunId.set(runId)
   runActive = true
-  ensureWorker().postMessage({ type: 'START', payload: { runId } } satisfies MainToWorker)
+  try {
+    ensureWorker().postMessage({ type: 'START', payload: { runId } } satisfies MainToWorker)
+  } catch (error) {
+    runActive = false
+    activeRunId.set(null)
+    disposeWorker()
+    throw error
+  }
 }
 
 export function pause(runId?: string): void {
@@ -144,7 +171,6 @@ export function resume(runId?: string): void {
 }
 
 export function stop(runId?: string): void {
-  runActive = false
   ensureWorker().postMessage({
     type: 'STOP',
     payload: runId ? { runId } : undefined,
@@ -158,11 +184,13 @@ export function compareAB(
   itemIds: string[],
   config: RunConfig
 ): void {
+  const requestId = ++comparisonRequestId
   comparisonState.set({ running: true, results: null, error: '' })
   try {
     ensureWorker().postMessage({
       type: 'COMPARE_AB',
       payload: {
+        requestId,
         taskId,
         promptA,
         promptB,
@@ -185,7 +213,6 @@ export function getState(): void {
 
 /** Reset state — used when navigating away from a task. */
 export function reset(): void {
-  runActive = false
   optimizationState.set({ run: null, candidates: [], history: [], log: [], stage: null })
   resetComparison()
 }
