@@ -4,7 +4,7 @@
   import Button from '../ui/Button.svelte'
   import { readDatasetFile } from '../../lib/io/csv'
   import { addItems, getDatasetByTask, createDataset } from '../../lib/db/datasets'
-  import { getTask, saveTask } from '../../lib/db/tasks'
+  import { getTask, saveTask, TaskNotFoundError } from '../../lib/db/tasks'
   import type { ParsedRow } from '../../lib/io/jsonl'
   import { t } from '../../stores/toast'
 
@@ -45,18 +45,21 @@
 
   async function commit() {
     if (!preview.length) return
-    let ds = await getDatasetByTask(taskId)
-    if (!ds) {
-      ds = await createDataset(taskId)
+    try {
+      let ds = await getDatasetByTask(taskId)
+      if (!ds) ds = await createDataset(taskId)
+      await addItems(ds.id, preview)
+      const task = await getTask(taskId)
+      if (!task) throw new TaskNotFoundError(taskId)
+      await saveTask({ ...task, datasetId: ds.id })
+      open = false
+      file = null
+      preview = []
+      t.success($_('toast.imported'))
+      onimported?.(ds.id)
+    } catch (error) {
+      t.error(error instanceof Error ? error.message : String(error))
     }
-    await addItems(ds.id, preview)
-    const t0 = await getTask(taskId)
-    if (t0) await saveTask({ ...t0, datasetId: ds.id })
-    open = false
-    file = null
-    preview = []
-    t.success($_('toast.imported'))
-    onimported?.(ds.id)
   }
 
   function onDrop(e: DragEvent) {

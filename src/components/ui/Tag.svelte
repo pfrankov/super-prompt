@@ -25,7 +25,7 @@
     font-size: var(--fs-xs);
     font-weight: 500;
     border: 1px solid var(--border-1);
-    background: color-mix(in srgb, var(--bg-2) 86%, black);
+    background: var(--bg-1);
     color: var(--ink-2);
     line-height: 1.5;
     white-space: nowrap;
