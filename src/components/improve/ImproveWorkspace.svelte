@@ -2,22 +2,25 @@
   import { _ } from 'svelte-i18n'
   import { get } from 'svelte/store'
   import { onDestroy, onMount } from 'svelte'
-  import type { Dataset, DatasetItem, ProviderConfig, RunConfig, RunStage, RunStageKey, Task } from '../../lib/types'
-  import { addItems, clearDataset, createDataset, getAllItems, getDataset } from '../../lib/db/datasets'
+  import type { Dataset, DatasetItem, RunConfig, RunStage, RunStageKey, Task } from '../../lib/types'
+  import { replaceGeneratedItems, createDataset, getAllItems, getDataset } from '../../lib/db/datasets'
   import { createRun, getCandidates, getIterations, getRun, listRuns, patchRun } from '../../lib/db/runs'
   import { saveTask } from '../../lib/db/tasks'
-  import { saveSettings, settings } from '../../stores/settings'
-  import { optimizationState, pause, reset, resume, start, stop } from '../../stores/worker'
+  import { stagePromptDraft } from '../../lib/db/prompt-drafts'
+  import { settings } from '../../stores/settings'
+  import { optimizationState, activeRunId, pause, resume, start, stop, getState } from '../../stores/worker'
   import { t } from '../../stores/toast'
   import { analyzePrompt, canAutoReplaceExamples, examplesAreManual, generatedItemsFromAnalysis, promptFingerprint } from '../../lib/improve/intake'
   import { shouldStopReloadedRun, stopReloadedRun } from '../../lib/improve/run-recovery'
-  import { isRunnableProvider, providerKindFromBaseUrl } from '../../lib/improve/model-routing'
+  import { isRunnableProvider, isRunnableModelSetup, providerKindFromBaseUrl } from '../../lib/improve/model-routing'
   import { nextPreflightAction, runPreflight, type PreflightResult } from '../../lib/improve/preflight'
   import { judgeRoute } from '../../lib/optimizer/judge'
 
+  import { readAppliedRevision, storeAppliedRevision, type AppliedRevision } from '../../lib/improve/applied-revision'
+  import PromptDiff from './PromptDiff.svelte'
+  import { diffPrompts } from '../../lib/improve/prompt-diff'
   import Button from '../ui/Button.svelte'
   import PromptEditor from '../ui/PromptEditor.svelte'
-  import TextField from '../ui/TextField.svelte'
   import NumberField from '../ui/NumberField.svelte'
   import Tag from '../ui/Tag.svelte'
   import ProgressChart from '../chart/ProgressChart.svelte'
@@ -25,13 +28,13 @@
   import CandidateTimeline from '../run/CandidateTimeline.svelte'
   import TokenMeter from '../run/TokenMeter.svelte'
   import CompareModal from '../compare/CompareModal.svelte'
+  import ModelSetupDialog from './ModelSetupDialog.svelte'
 
   let { task = $bindable() as Task }: { task: Task } = $props()
 
   type FlowState = 'idle' | 'intake' | 'preflight' | 'starting' | 'error'
   type PhaseKey = 'prepare' | 'mutate' | 'answer' | 'judge' | 'decide' | 'done'
   type StageStatus = 'pending' | 'active' | 'done' | 'error'
-  type WorkCell = { label: string; status: StageStatus }
   type SmartPlan = {
     kind: 'local' | 'cloud'
     iterationsCap: number
@@ -57,10 +60,32 @@
   let flowError = $state('')
   let preflight = $state<PreflightResult | null>(null)
   let compareOpen = $state(false)
+  let modelsOpen = $state(false)
+  let view = $state<'auto' | 'edit' | 'review'>('auto')
+  let originalOpen = $state(false)
+  let appliedRevision = $state<AppliedRevision | null>(null)
+  let detailsOpen = $state(false)
+  let candidateOpen = $state(false)
+  let alive = true
+  let preparation = 0
+  let saveState = $state<'saved' | 'saving' | 'error'>('saved')
+  let saveQueue = Promise.resolve()
+  let editVersion = 0
+  const emptyState = { run: null, candidates: [], history: [], log: [], stage: null }
+  const taskState = $derived($optimizationState.run?.taskId === task.id ? $optimizationState : emptyState)
+  const activeElsewhere = $derived(!!$activeRunId && $optimizationState.run?.taskId !== task.id)
+  const effectiveJudge = $derived(judgeRoute($settings.provider, $settings.arbitrator))
+  const isDemo = $derived($settings.provider.baseUrl.startsWith('mock://'))
+  const configured = $derived(isRunnableModelSetup($settings.provider, $settings.arbitrator))
+  const bestFeedback = $derived.by(() => {
+    for (let i = taskState.history.length - 1; i >= 0; i--) {
+      if (taskState.history[i].childCandidateId === bestCandidate?.id) return taskState.history[i].aggregatedFeedback
+    }
+    return ''
+  })
   let configEdited = $state(false)
   let tempsEdited = $state(false)
   let taskSaveTimer: number | undefined
-  let providerSaveTimer: number | undefined
   let intakeController: AbortController | null = null
   let preflightController: AbortController | null = null
   const phaseSteps: PhaseKey[] = ['prepare', 'mutate', 'answer', 'judge', 'decide', 'done']
@@ -110,32 +135,49 @@
     && isRunnableProvider($settings.provider)
     && canAutoReplaceExamples(items, promptFingerprintNow)
   )
-  const run = $derived($optimizationState.run)
+  const run = $derived(taskState.run)
   const isRunning = $derived(run?.status === 'running')
   const isPaused = $derived(run?.status === 'paused')
   const isStopped = $derived(run?.status === 'stopped' || run?.status === 'completed' || run?.status === 'failed')
   const canStartRun = $derived(!run || run.status === 'idle' || isStopped)
   const bestCandidate = $derived(
     run?.bestCandidateId
-      ? $optimizationState.candidates.find((c) => c.id === run.bestCandidateId) ?? null
-      : $optimizationState.candidates.reduce<typeof $optimizationState.candidates[number] | null>(
+      ? taskState.candidates.find((c) => c.id === run.bestCandidateId) ?? null
+      : taskState.candidates.reduce<typeof taskState.candidates[number] | null>(
           (b, c) => (c.score != null && (!b || c.score > (b.score ?? 0)) ? c : b),
           null
         )
   )
-  const bestIsCurrent = $derived(!!bestCandidate && task.initialPrompt.trim() === bestCandidate.text.trim())
-  const chartPoints = $derived(
-    $optimizationState.history.map((h) => ({
-      iter: h.index + 1,
-      bestScore: $optimizationState.candidates.find((c) => c.id === h.childCandidateId)?.score ?? 0,
-    }))
-  )
+  const bestIsCurrent = $derived(!!bestCandidate && task.initialPrompt === bestCandidate.text)
+  const reviewing = $derived(!!bestCandidate && view !== 'edit')
+  const canUndo = $derived(!!appliedRevision && task.initialPrompt === appliedRevision.after)
+  const diffBefore = $derived(canUndo && appliedRevision && appliedRevision.after === bestCandidate?.text ? appliedRevision.before : task.initialPrompt)
+  const chartPoints = $derived.by(() => {
+    const scores = new Map(taskState.candidates.map((c) => [c.id, c.score]))
+    return taskState.history.slice(-500).map((h) => ({ iter: h.index + 1, bestScore: scores.get(h.childCandidateId) ?? 0 }))
+  })
   const primaryBusy = $derived(flowState === 'intake' || flowState === 'preflight' || flowState === 'starting')
+  const hasPendingRevision = $derived(!!bestCandidate && !bestIsCurrent && !isRunning && !isPaused && !primaryBusy)
+  const revisionSegments = $derived.by(() => {
+    if (!bestCandidate) return []
+    const compared = diffPrompts(diffBefore, bestCandidate.text)
+    const segments: { text: string; added: boolean }[] = []
+    for (const line of compared.lines) {
+      if (line.kind === 'removed') continue
+      const added = line.kind === 'added'
+      const last = segments.at(-1)
+      if (last?.added === added) last.text += line.text + line.ending
+      else segments.push({ text: line.text + line.ending, added })
+      // Keep the reading view bounded in DOM size; full detail remains in the paged diff.
+      if (segments.length > 48) return [{ text: bestCandidate.text, added: false }]
+    }
+    return segments
+  })
   const nextAction = $derived(preflight ? nextPreflightAction(preflight.steps) : '')
   const currentStageKey = $derived(resolveCurrentStageKey())
   const liveStage = $derived(stageForView())
-  const showStageFlow = $derived(primaryBusy || isRunning || isPaused || run?.status === 'failed' || run?.status === 'stopped')
-  const hasRunSummary = $derived(!!run && (isRunning || isPaused || run.status === 'failed' || run.status === 'stopped' || $optimizationState.history.length > 0))
+  const showStageFlow = $derived(primaryBusy || isRunning || isPaused || run?.status === 'failed' || run?.status === 'stopped' || run?.status === 'completed')
+  const hasRunSummary = $derived(!!run && (isRunning || isPaused || run.status === 'failed' || run.status === 'stopped' || taskState.history.length > 0))
   const stageProgress = $derived(stageProgressPercent())
 
   $effect(() => {
@@ -146,24 +188,26 @@
   })
 
   onMount(async () => {
-    reset()
+    appliedRevision = readAppliedRevision(task.id, task.initialPrompt)
     await loadItems()
-    await hydrateLatestRun()
+    if (alive) await hydrateLatestRun()
   })
 
   onDestroy(() => {
-    if (taskSaveTimer) clearTimeout(taskSaveTimer)
-    if (providerSaveTimer) clearTimeout(providerSaveTimer)
+    alive = false
+    preparation++
+    if (taskSaveTimer) { clearTimeout(taskSaveTimer); persistTask() }
     intakeController?.abort()
     preflightController?.abort()
   })
 
   async function hydrateLatestRun() {
+    if (taskState.run && $activeRunId === taskState.run.id) { getState(); return }
     const runs = await listRuns(task.id)
     if (!runs.length) return
     let last = await getRun(runs[0].id)
-    if (!last) return
-    if (shouldStopReloadedRun(last)) {
+    if (!last || !alive) return
+    if (shouldStopReloadedRun(last) && $activeRunId !== last.id) {
       const recovered = stopReloadedRun(last, Date.now(), $_('improve.status.stoppedAfterReload'))
       await patchRun(last.id, {
         status: recovered.status,
@@ -176,6 +220,7 @@
       getCandidates(last.id),
       getIterations(last.id),
     ])
+    if (!alive || $activeRunId) return
     optimizationState.update((state) => ({
       ...state,
       run: last,
@@ -205,34 +250,37 @@
     return ds
   }
 
+  function persistTask() {
+    taskSaveTimer = undefined
+    const snapshot = taskSnapshot()
+    const version = editVersion
+    saveState = 'saving'
+    saveQueue = saveQueue.catch(() => {}).then(() => saveTask(snapshot))
+    void saveQueue.then(() => { if (alive && version === editVersion && !taskSaveTimer) saveState = 'saved' }, () => { if (alive && version === editVersion) saveState = 'error' })
+  }
+
   function scheduleTaskSave() {
+    if (appliedRevision && task.initialPrompt !== appliedRevision.after) {
+      appliedRevision = null
+      storeAppliedRevision(task.id, null)
+    }
+    editVersion++
+    try { stagePromptDraft(task.id, task.initialPrompt) } catch { saveState = 'error' }
+    if (primaryBusy) cancelPreparation()
     preflight = null
     flowError = ''
+    saveState = 'saving'
     if (taskSaveTimer) clearTimeout(taskSaveTimer)
-    taskSaveTimer = window.setTimeout(() => {
-      void saveTask(taskSnapshot())
-    }, 500)
+    taskSaveTimer = window.setTimeout(persistTask, 250)
   }
 
-  function scheduleProviderSave() {
-    preflight = null
+  function cancelPreparation() {
+    preparation++
+    intakeController?.abort()
+    preflightController?.abort()
+    flowState = 'idle'
+    flowMessage = ''
     flowError = ''
-    if (providerSaveTimer) clearTimeout(providerSaveTimer)
-    providerSaveTimer = window.setTimeout(() => {
-      void saveSettings({ provider: get(settings).provider })
-    }, 500)
-  }
-
-  function updateProvider(patch: Partial<ProviderConfig>) {
-    const snapshot = get(settings)
-    settings.set({
-      ...snapshot,
-      provider: {
-        ...snapshot.provider,
-        ...patch,
-      },
-    })
-    scheduleProviderSave()
   }
 
   function resolveCurrentStageKey(): RunStageKey | null {
@@ -244,7 +292,7 @@
     if (run?.status === 'stopped') return 'stopped'
     if (run?.status === 'failed') return 'failed'
     if (run?.status === 'completed') return 'completed'
-    return $optimizationState.stage?.key ?? null
+    return taskState.stage?.key ?? null
   }
 
   function stageForView(): RunStage | null {
@@ -257,7 +305,7 @@
         changeSummary: flowError || nextAction || flowMessage,
       }
     }
-    if ($optimizationState.stage) return $optimizationState.stage
+    if (taskState.stage) return taskState.stage
     if (
       run
       && (
@@ -301,8 +349,8 @@
       case 'stopped':
       case 'failed':
         if (flowState === 'error') return 'prepare'
-        if ($optimizationState.stage?.key && $optimizationState.stage.key !== key) {
-          return phaseForStage($optimizationState.stage.key)
+        if (taskState.stage?.key && taskState.stage.key !== key) {
+          return phaseForStage(taskState.stage.key)
         }
         return run?.iterationCount ? 'decide' : 'prepare'
       default:
@@ -318,7 +366,7 @@
     const currentPhase = phaseForStage(currentStageKey)
     if (currentStageKey === 'failed' && step === (currentPhase ?? 'prepare')) return 'error'
     if (currentStageKey === 'stopped' || currentStageKey === 'paused') {
-      const lastPhase = phaseForStage($optimizationState.stage?.key ?? 'starting')
+      const lastPhase = phaseForStage(taskState.stage?.key ?? 'starting')
       return phaseRank(step) === phaseRank(lastPhase) ? 'active' : phaseRank(step) < phaseRank(lastPhase) ? 'done' : 'pending'
     }
     const current = phaseRank(currentPhase)
@@ -405,71 +453,8 @@
     return $_('improve.stage.samples', { values: { current: liveStage.sampleIndex ?? liveStage.sampleCount, total: liveStage.sampleCount } })
   }
 
-  function stageScoreText(): string {
-    if (liveStage?.parentScore == null && liveStage?.challengerScore == null) return ''
-    return $_('improve.stage.scores', { values: { parent: scoreText(liveStage?.parentScore), child: scoreText(liveStage?.challengerScore) } })
-  }
-
-  function hasPairContext(): boolean {
-    return !!(
-      liveStage?.parentCandidateId
-      || liveStage?.challengerCandidateId
-      || liveStage?.parentScore != null
-      || liveStage?.challengerScore != null
-    )
-  }
-
-  function pairWorkCells(): WorkCell[] {
-    const count = liveStage?.sampleCount ?? 0
-    if (!count || !currentStageKey) return []
-    const afterAnswer = ['judging', 'scoring', 'persisting', 'completed'].includes(currentStageKey)
-    const afterJudge = ['scoring', 'persisting', 'completed'].includes(currentStageKey)
-    const activeAnswer = currentStageKey === 'answering'
-    const activeJudge = currentStageKey === 'judging'
-    const sampleIndex = Math.max(0, liveStage?.sampleIndex ?? 0)
-    const cells: WorkCell[] = []
-    for (let i = 1; i <= count; i += 1) {
-      cells.push({
-        label: $_('improve.stage.work.answer', { values: { n: i } }),
-        status: afterAnswer || (activeAnswer && i < sampleIndex) ? 'done' : activeAnswer && i === sampleIndex ? 'active' : 'pending',
-      })
-    }
-    for (let i = 1; i <= count; i += 1) {
-      cells.push({
-        label: $_('improve.stage.work.judge', { values: { n: i } }),
-        status: afterJudge || (activeJudge && i < sampleIndex) ? 'done' : activeJudge && i === sampleIndex ? 'active' : 'pending',
-      })
-    }
-    return cells
-  }
-
-  function decisionText(): string {
-    if (currentStageKey === 'failed') return $_('improve.stage.decision.failed')
-    if (currentStageKey === 'stopped') return $_('improve.stage.decision.stopped')
-    if (currentStageKey === 'paused') return $_('improve.stage.decision.paused')
-    if (currentStageKey === 'completed') return $_('improve.stage.decision.complete')
-    if (currentStageKey === 'intake' || currentStageKey === 'preflight' || currentStageKey === 'starting') return $_('improve.stage.decision.setup')
-    if (currentStageKey !== 'scoring' && currentStageKey !== 'persisting') return $_('improve.stage.decision.waiting')
-    const parentScore = liveStage?.parentScore
-    const childScore = liveStage?.challengerScore
-    if (parentScore == null || childScore == null) return $_('improve.stage.decision.scoring')
-    if (Math.abs(parentScore - childScore) < 0.05) return $_('improve.stage.decision.tie')
-    return childScore > parentScore ? $_('improve.stage.decision.challenger') : $_('improve.stage.decision.parent')
-  }
-
-  function verdictStatsText(): string {
-    if (liveStage?.wins == null && liveStage?.losses == null && liveStage?.ties == null) return ''
-    return $_('improve.stage.verdicts', {
-      values: {
-        parent: liveStage?.wins ?? 0,
-        challenger: liveStage?.losses ?? 0,
-        ties: liveStage?.ties ?? 0,
-        failed: liveStage?.failedPairs ?? 0,
-      },
-    })
-  }
-
   async function runIntake(): Promise<boolean> {
+    const operation = preparation
     if (!task.initialPrompt.trim() || !$settings.provider.targetModel.trim()) return false
     const fp = promptFingerprint(task.initialPrompt)
     if (examplesAreManual(items)) {
@@ -503,9 +488,17 @@
         count: 8,
         signal: intakeController.signal,
       })
+      if (!alive || operation !== preparation || intakeController.signal.aborted) return false
       const ds = await ensureDataset()
-      if (items.length > 0) await clearDataset(ds.id)
-      await addItems(ds.id, generatedItemsFromAnalysis(analysis, fp))
+      if (!alive || operation !== preparation || intakeController.signal.aborted) return false
+      const replaced = await replaceGeneratedItems(ds.id, generatedItemsFromAnalysis(analysis, fp), intakeController.signal)
+      if (!alive || operation !== preparation || intakeController.signal.aborted) return false
+      if (!replaced) {
+        await loadItems()
+        flowState = 'idle'
+        flowMessage = $_('improve.status.manualExamplesPreserved')
+        return true
+      }
       task = {
         ...task,
         name: task.name.trim() ? task.name : analysis.name,
@@ -519,7 +512,7 @@
       flowMessage = $_('improve.status.examplesReady')
       return true
     } catch (e) {
-      if ((e as Error).name === 'AbortError') return false
+      if (!alive || operation !== preparation || intakeController?.signal.aborted || (e as Error).name === 'AbortError') return false
       flowState = 'error'
       flowError = e instanceof Error ? e.message : String(e)
       return false
@@ -527,6 +520,7 @@
   }
 
   async function runChecks(): Promise<boolean> {
+    const operation = preparation
     preflightController?.abort()
     preflightController = new AbortController()
     flowState = 'preflight'
@@ -541,6 +535,7 @@
         items,
         signal: preflightController.signal,
       })
+      if (!alive || operation !== preparation || preflightController.signal.aborted) return false
       preflight = result
       if (!result.ready) {
         flowState = 'error'
@@ -551,6 +546,7 @@
       flowMessage = $_('improve.status.ready')
       return true
     } catch (e) {
+      if (!alive || operation !== preparation) return false
       flowState = 'error'
       flowError = e instanceof Error ? e.message : String(e)
       return false
@@ -558,30 +554,36 @@
   }
 
   async function improve() {
-    if (!task.initialPrompt.trim()) {
-      t.error($_('errors.noPrompt'))
-      return
-    }
-    if (!$settings.provider.targetModel.trim()) {
-      flowError = $_('improve.status.modelNeeded')
-      return
-    }
-    await saveTask(taskSnapshot())
-    if (items.length < 2 || canAutoReplaceExamples(items, promptFingerprintNow)) {
-      const ok = await runIntake()
-      if (!ok) return
-    }
-    await loadItems()
-    if (items.length < 2) {
-      flowError = $_('errors.noDataset')
-      return
-    }
+    if (primaryBusy || $activeRunId || !task.initialPrompt.trim()) return
+    if (!configured) { modelsOpen = true; return }
+    const operation = ++preparation
     flowState = 'starting'
-    flowMessage = $_('improve.status.starting')
-    const run = await createRun(task.id, config)
-    start(run.id)
-    flowState = 'idle'
-    flowMessage = ''
+    flowError = ''
+    try {
+      if (taskSaveTimer) clearTimeout(taskSaveTimer)
+      persistTask()
+      await saveQueue
+      if (!alive || operation !== preparation) return
+      if (items.length < 2 || canAutoReplaceExamples(items, promptFingerprintNow)) {
+        if (!await runIntake()) return
+      }
+      await loadItems()
+      if (!alive || operation !== preparation) return
+      if (items.length < 2) { flowError = $_('errors.noDataset'); flowState = 'error'; return }
+      flowState = 'starting'
+      const nextRun = await createRun(task.id, $state.snapshot(config))
+      if (!alive || operation !== preparation) { await patchRun(nextRun.id, { status: 'stopped', finishedAt: Date.now() }); return }
+      view = 'auto'
+      originalOpen = false
+      optimizationState.set({ run: nextRun, candidates: [], history: [], log: [], stage: null })
+      start(nextRun.id)
+      flowState = 'idle'
+      flowMessage = ''
+    } catch (e) {
+      if (!alive || operation !== preparation) return
+      flowState = 'error'
+      flowError = e instanceof Error ? e.message : String(e)
+    }
   }
 
   async function copyBest() {
@@ -591,10 +593,28 @@
   }
 
   async function applyBest() {
-    if (!bestCandidate || bestIsCurrent) return
+    if (!bestCandidate || bestIsCurrent || isRunning || isPaused || primaryBusy) return
+    appliedRevision = { before: task.initialPrompt, after: bestCandidate.text }
+    storeAppliedRevision(task.id, appliedRevision)
     task = { ...task, initialPrompt: bestCandidate.text }
-    await saveTask(taskSnapshot())
-    t.success($_('actions.saved'))
+    scheduleTaskSave()
+    if (taskSaveTimer) clearTimeout(taskSaveTimer)
+    persistTask()
+    try { await saveQueue; t.success($_('actions.saved')) }
+    catch { t.error($_('workspace.saveFailed')) }
+  }
+
+  async function undoApply() {
+    if (!canUndo || !appliedRevision || isRunning || isPaused || primaryBusy) return
+    const previous = appliedRevision.before
+    appliedRevision = null
+    storeAppliedRevision(task.id, null)
+    task = { ...task, initialPrompt: previous }
+    scheduleTaskSave()
+    if (taskSaveTimer) clearTimeout(taskSaveTimer)
+    persistTask()
+    try { await saveQueue; t.success($_('revision.restored')) }
+    catch { t.error($_('workspace.saveFailed')) }
   }
 
   function exportBest() {
@@ -604,8 +624,8 @@
         task: { id: task.id, name: task.name, description: task.description },
         bestPrompt: bestCandidate.text,
         score: bestCandidate.score,
-        candidates: $optimizationState.candidates,
-        iterations: $optimizationState.history,
+        candidates: taskState.candidates,
+        iterations: taskState.history,
       }, null, 2)],
       { type: 'application/json' }
     )
@@ -617,213 +637,89 @@
     URL.revokeObjectURL(url)
     t.success($_('toast.exported'))
   }
+
+  function beforeUnload(e: BeforeUnloadEvent) {
+    if (saveState === 'saved') return
+    if (taskSaveTimer) { clearTimeout(taskSaveTimer); persistTask() }
+    e.preventDefault()
+    e.returnValue = ''
+  }
+
 </script>
-
-<div class="workspace">
-  <div class="main-flow">
-  <section class="primary surface">
-    <div class="primary-head">
-      <div>
-        <h2>{$_('improve.title')}</h2>
-        <p>{$_('improve.subtitle')}</p>
-      </div>
-    </div>
-
-    <PromptEditor
-      bind:value={task.initialPrompt}
-      label={$_('improve.promptLabel')}
-      placeholder={$_('improve.promptPlaceholder')}
-      rows={12}
-      oninput={scheduleTaskSave}
-    />
-
-    <div class="model-row">
-      <TextField
-        value={$settings.provider.targetModel}
-        label={$_('settings.targetModel')}
-        placeholder="gemma4:e2b"
-        oninput={(value) => updateProvider({ targetModel: value })}
-      />
-      <div class="judge-chip">
-        <span class="chip-label">{$_('improve.judgeLabel')}</span>
-        <strong>{$settings.arbitrator.enabled ? $settings.arbitrator.model : $settings.provider.judgeModel}</strong>
-      </div>
-    </div>
-
-    <div class="actions-row">
-      {#if canStartRun}
-        <div class="primary-action">
-          <Button full size="lg" onclick={improve} loading={primaryBusy} disabled={!task.initialPrompt.trim()}>
-            {$_('improve.primary')}
-          </Button>
-        </div>
-      {:else if isRunning}
-        <Button variant="secondary" onclick={() => pause(run?.id)}>{$_('run.pause')}</Button>
-        <Button variant="danger" onclick={() => stop(run?.id)}>{$_('run.stop')}</Button>
-      {:else if isPaused}
-        <Button variant="primary" onclick={() => resume(run?.id)}>{$_('run.resume')}</Button>
-        <Button variant="danger" onclick={() => stop(run?.id)}>{$_('run.stop')}</Button>
-      {/if}
-      <Button variant="ghost" onclick={() => void runIntake()} disabled={!task.initialPrompt.trim() || primaryBusy}>
-        {$_('improve.regenerateExamples')}
-      </Button>
-      <Button variant="ghost" onclick={runChecks} disabled={!task.initialPrompt.trim() || items.length < 2 || primaryBusy}>
-        {$_('improve.check')}
-      </Button>
-    </div>
-
-    {#if flowMessage || flowError || nextAction}
-      <div class:error-state={!!flowError} class="status-line">
-        <span>{flowError || nextAction || flowMessage}</span>
-      </div>
-    {/if}
-
-    {#if showStageFlow}
-      <div class="stage-flow" aria-live="polite">
-        <div class="stage-current">
-          <div class="stage-copy">
-            <span>{$_('improve.stage.now')}</span>
-            <strong>{$_(`improve.stage.steps.${stageLabelKey(currentStageKey)}`)}</strong>
-            <p>{currentStageDetail()}</p>
-          </div>
-          <div class="stage-metrics">
-            {#if stageIterationText()}<span>{stageIterationText()}</span>{/if}
-            {#if stageSampleText()}<span>{stageSampleText()}</span>{/if}
-            {#if stageScoreText()}<span>{stageScoreText()}</span>{/if}
-          </div>
-        </div>
-        <div class="stage-meter" aria-hidden="true">
-          <span style={`transform: scaleX(${stageProgress / 100})`}></span>
-        </div>
-        {#if hasPairContext()}
-          <div class="versus-board" aria-label={$_('improve.stage.matchup')}>
-            <div>
-              <span>{$_('improve.stage.parent')}</span>
-              <strong>{shortCandidate(liveStage?.parentCandidateId)}</strong>
-              <small>{scoreText(liveStage?.parentScore)}</small>
-            </div>
-            <span class="versus">vs</span>
-            <div>
-              <span>{$_('improve.stage.challenger')}</span>
-              <strong>{shortCandidate(liveStage?.challengerCandidateId)}</strong>
-              <small>{scoreText(liveStage?.challengerScore)}</small>
-            </div>
-          </div>
-        {/if}
-        {#if pairWorkCells().length}
-          <div class="work-cells" aria-label={$_('improve.stage.work.title')}>
-            {#each pairWorkCells() as cell, i (`${cell.label}-${i}`)}
-              <span class:done={cell.status === 'done'} class:active={cell.status === 'active'} class:error={cell.status === 'error'}>
-                <i aria-hidden="true"></i>{cell.label}
-              </span>
-            {/each}
-          </div>
-        {/if}
-        <div class="decision-row">
-          <strong>{decisionText()}</strong>
-          {#if verdictStatsText()}<span>{verdictStatsText()}</span>{/if}
-        </div>
-        <ol class="stage-steps" aria-label={$_('improve.stage.title')}>
-          {#each phaseSteps as step}
-            {@const status = phaseStatus(step)}
-            <li
-              class:done={status === 'done'}
-              class:active={status === 'active'}
-              class:error={status === 'error'}
-              aria-current={status === 'active' ? 'step' : undefined}
-            >
-              <span class="step-dot" aria-hidden="true"></span>
-              <span>{$_(`improve.stage.phases.${step}`)}</span>
-            </li>
-          {/each}
-        </ol>
-      </div>
-    {/if}
-  </section>
-
-  <section class="result surface">
-    {#if bestCandidate}
-      <div class="result-head">
-        <div>
-          <h3>{$_('improve.result.title')}</h3>
-          <p>{$_('improve.result.body')}</p>
-        </div>
-        <Tag tone="ok">{bestCandidate.score?.toFixed(2) ?? '-'}</Tag>
-      </div>
-      <pre>{bestCandidate.text}</pre>
-      <div class="result-actions">
-        <Button size="sm" onclick={copyBest}>{$_('common.copy')}</Button>
-        <Button size="sm" variant="secondary" onclick={applyBest} disabled={bestIsCurrent}>
-          {bestIsCurrent ? $_('improve.result.current') : $_('improve.result.apply')}
-        </Button>
-        <Button size="sm" variant="ghost" onclick={() => (compareOpen = true)}>{$_('run.compare')}</Button>
-        <Button size="sm" variant="ghost" onclick={exportBest}>{$_('common.export')}</Button>
-      </div>
-    {:else}
-      <div class="empty-result">
-        <h3>{$_('improve.result.emptyTitle')}</h3>
-        <p>{$_('improve.result.emptyBody')}</p>
-      </div>
-    {/if}
-  </section>
-
-  {#if hasRunSummary}
-    <section class="run-details">
-      <div class="run-state surface">
-        <div class="run-state-head">
-          <div>
-            <h3>{$_('run.summaryTitle')}</h3>
-            <p>{$_('run.summaryBody')}</p>
-          </div>
-          <Tag tone={run?.status === 'running' ? 'info' : run?.status === 'paused' ? 'warn' : run?.status === 'failed' ? 'err' : run?.status === 'completed' ? 'ok' : 'neutral'}>
-            {run ? $_('run.status.' + run.status) : $_('run.noRun')}
-          </Tag>
-        </div>
-        {#if config.tokenBudget > 0}
-          <div class="budget">
-            <span class="dim">{$_('run.tokensLeft')}</span>
-            <TokenMeter used={(run?.totalTokensIn ?? 0) + (run?.totalTokensOut ?? 0)} budget={config.tokenBudget} />
-          </div>
-        {/if}
-        <RunStats />
-        <div class="chart">
-          <ProgressChart points={chartPoints} />
+<svelte:window onbeforeunload={beforeUnload} />
+<div class="workspace" data-testid="workspace-ready">
+  <div class="workspace-header">
+    <nav class="flow-nav" aria-label={$_('revision.workflow')}>
+      <button class:current={!reviewing} onclick={() => view = 'edit'} aria-current={!reviewing ? 'step' : undefined}><span>01</span> {$_('revision.prompt')}</button>
+      <button aria-label={$_('workspace.configure')} title={`${$settings.provider.targetModel || $_('revision.notSet')} / ${effectiveJudge.model || $_('revision.notSet')}`} onclick={() => modelsOpen = true} disabled={isRunning || isPaused || primaryBusy}><span>02</span> {$_('revision.models')}</button>
+      <button class:current={reviewing} onclick={() => view = 'review'} disabled={!bestCandidate} aria-current={reviewing ? 'step' : undefined}><span>03</span> {$_('revision.review')}</button>
+    </nav>
+    <span class="save-status" role="status">{isDemo ? `${$_('workspace.demo')} · ` : ''}{saveState === 'saved' ? $_('workspace.saved') : saveState === 'saving' ? $_('workspace.saving') : $_('workspace.saveFailed')}</span>
+  </div>
+  {#if activeElsewhere}
+    <div class="notice" role="status">{$_('workspace.activeElsewhere')} <a href={`#/task/${$optimizationState.run?.taskId}/improve`}>{$_('workspace.openActive')}</a></div>
+  {/if}
+  {#if isRunning || isPaused || primaryBusy || flowError || run?.status === 'failed' || run?.status === 'stopped'}
+    <section class="run-strip" data-testid="run-status" data-status={primaryBusy || flowState === 'error' ? flowState : run?.status ?? flowState}>
+      <div class="section-head"><div><h3>{$_(`improve.stage.steps.${stageLabelKey(currentStageKey)}`)}</h3><span class="supporting">{stageIterationText()}{stageSampleText() ? ` · ${stageSampleText()}` : ''}</span></div>
+        <div class="actions-row">
+          {#if primaryBusy}<Button variant="secondary" onclick={cancelPreparation}>{$_('workspace.cancel')}</Button>
+          {:else if isRunning}<Button variant="secondary" onclick={() => pause(run?.id)}>{$_('run.pause')}</Button><Button variant="ghost" onclick={() => stop(run?.id)}>{$_('run.stop')}</Button>
+          {:else if isPaused}<Button onclick={() => resume(run?.id)}>{$_('run.resume')}</Button><Button variant="ghost" onclick={() => stop(run?.id)}>{$_('run.stop')}</Button>{/if}
         </div>
       </div>
-      {#if $optimizationState.candidates.length}
-        <details class="candidate-details">
-          <summary>{$_('candidate.title')}</summary>
-          <CandidateTimeline />
-        </details>
+      {#if flowError || run?.errorMessage}<p class="error" role="alert">{flowError || run?.errorMessage}</p>{:else}<p class="supporting" role="status">{currentStageDetail()}</p>{/if}
+      {#if isRunning || isPaused || primaryBusy}
+        <div class="stage-meter" aria-hidden="true"><span style={`transform:scaleX(${stageProgress / 100})`}></span></div>
+        <ol class="stage-steps" aria-label={$_('improve.stage.title')}>{#each phaseSteps as step}{@const status = phaseStatus(step)}<li class:done={status === 'done'} class:active={status === 'active'} class:error={status === 'error'} aria-current={status === 'active' ? 'step' : undefined}>{$_(`improve.stage.phases.${step}`)}</li>{/each}</ol>
+        <p class="supporting">{$_('workspace.stopHelp')}</p>
       {/if}
     </section>
   {/if}
-  </div>
+  <section class="workbench" data-testid="run-result">
+    <div class="workbench-heading">
+      <div><span class="eyebrow">{reviewing ? $_('revision.readyReview') : $_('revision.startHere')}</span><h2>{reviewing ? $_('revision.reviewTitle') : $_('revision.promptTitle')}</h2><p class="supporting">{reviewing ? isRunning || isPaused ? $_('workspace.provisional') : bestIsCurrent ? $_('revision.currentBest') : '' : $_('workspace.currentHelp')}</p></div>
+      {#if bestCandidate}<Button variant="ghost" size="sm" onclick={() => view = reviewing ? 'edit' : 'review'}>{reviewing ? $_('revision.edit') : $_('revision.review')}</Button>{/if}
+    </div>
+    {#if reviewing && bestCandidate}
+      <div class="proposed-prompt" data-testid="result-prompt">{#each revisionSegments as segment}<span class:added={segment.added}>{segment.text}</span>{/each}</div>
+      <details data-testid="original-wording" class="original" bind:open={originalOpen}><summary>{$_('revision.original')}</summary>
+        {#if originalOpen}<PromptDiff before={diffBefore} after={bestCandidate.text} labels={{ ariaLabel: $_('diff.ariaLabel'), unchanged: $_('diff.unchanged'), removed: $_('diff.removed'), added: $_('diff.added'), empty: $_('diff.empty'), limited: $_('diff.limited'), page: $_('diff.page', { values: { from: '{from}', to: '{to}', total: '{total}' } }), previous: $_('diff.previous'), next: $_('diff.next'), continued: $_('diff.continued'), lineEnding: $_('diff.lineEnding'), noLineEnding: $_('diff.noLineEnding'), currentLine: $_('diff.currentLine'), proposedLine: $_('diff.proposedLine') }} />{/if}
+      </details>
+      <section class="arbiter-note" aria-label={$_('revision.arbiterEvaluation')}>
+        <span>{bestCandidate.rationale ? $_('workspace.change') : $_('revision.arbiterEvaluation')}</span>
+        <p>{compactDetail(bestCandidate.rationale || $_('workspace.scoreHelp'), 260)}</p>
+        <div class="evidence-meta"><span>{bestCandidate.score == null ? $_('workspace.noResult') : $_(bestCandidate.iterations === 1 ? 'revision.scoreOne' : 'revision.score', { values: { score: bestCandidate.score.toFixed(2), count: bestCandidate.iterations } })}</span>{#if isDemo}<span>{$_('workspace.demo')}</span>{/if}</div>
+      </section>
+      <div class="decision-row">
 
-  <aside class="side">
-    <section class="panel setup-panel surface">
-      <div class="panel-head">
-        <h3>{$_('improve.setup.title')}</h3>
-      </div>
-
-      <div class="setup-section">
-        <div class="section-head">
-          <span>{$_('improve.examples.title')}</span>
-          <Tag tone={items.length >= 2 ? 'ok' : canGenerateExamples ? 'info' : 'warn'}>
-            {items.length >= 2
-              ? $_('improve.examples.count', { values: { count: items.length } })
-              : $_('improve.setup.needsExamples', { values: { count: Math.max(0, 2 - items.length) } })}
-          </Tag>
+        <div class="actions-row decision-actions">
+          {#if canUndo}<Button variant="ghost" onclick={undoApply} disabled={isRunning || isPaused || primaryBusy}>{$_('revision.undo')}</Button>{/if}
+          {#if hasPendingRevision}<Button size="lg" onclick={applyBest}>{$_('revision.apply')}</Button><Button variant="ghost" onclick={() => view = 'edit'}>{$_('revision.keep')}</Button>
+          {:else if canStartRun && !primaryBusy}<Button size="lg" onclick={improve} disabled={!task.initialPrompt.trim() || activeElsewhere}>{$_('improve.primary')}</Button>{/if}
         </div>
-        <p class="panel-copy">
-          {items.length >= 2 ? $_('improve.examples.readyBody') : $_('improve.examples.empty')}
-        </p>
-        <Button size="sm" variant="ghost" href={`#/task/${task.id}/dataset`}>
-          {$_('improve.examples.open')}
-        </Button>
       </div>
-
-      <details>
+      <details class="evidence"><summary>{$_('workspace.why')}</summary>
+        <p>{$_('workspace.scoreHelp')}</p>
+        <p>{$_(bestCandidate.iterations === 1 ? 'revision.trialsOne' : 'workspace.trials', { values: { count: bestCandidate.iterations, wins: bestCandidate.wins, losses: bestCandidate.losses, ties: bestCandidate.ties } })}</p>
+        {#if bestCandidate.rationale}<h4>{$_('workspace.change')}</h4><p>{bestCandidate.rationale}</p>{/if}
+        {#if bestFeedback}<h4>{$_('workspace.feedback')}</h4><p>{$_('revision.feedbackContext')}</p><pre>{bestFeedback}</pre>{/if}
+        <Button variant="secondary" onclick={() => compareOpen = true} disabled={isRunning || isPaused || primaryBusy}>{$_('run.compare')}</Button>
+      </details>
+      {#if run?.status === 'completed' && !primaryBusy && flowState !== 'error'}<p class="completion" data-testid="run-status" data-status="completed">{$_('revision.complete')} · {stageIterationText()}</p>{/if}
+      <div class="output-tools"><Button variant="ghost" size="sm" onclick={copyBest}>{$_('common.copy')}</Button><Button variant="ghost" size="sm" onclick={exportBest}>{$_('common.export')}</Button></div>
+    {:else}
+      <div class="prompt-editor"><PromptEditor bind:value={task.initialPrompt} label={$_('workspace.current')} rows={13} oninput={scheduleTaskSave} /></div>
+      <div class="editor-footer"><p class="supporting">{$_('workspace.autoExamples')}</p><div class="actions-row">
+        {#if canUndo}<Button variant="ghost" onclick={undoApply} disabled={isRunning || isPaused || primaryBusy}>{$_('revision.undo')}</Button>{/if}
+        {#if canStartRun}<Button size="lg" onclick={improve} loading={primaryBusy} disabled={!task.initialPrompt.trim() || activeElsewhere}>{configured ? $_('improve.primary') : $_('revision.chooseModels')}</Button>{/if}
+      </div></div>
+    {/if}
+  </section>
+  <details class="options" bind:open={detailsOpen}><summary>{$_('workspace.details')}<span>{$_('improve.examples.count', { values:{count:items.length} })}</span></summary>
+    <div class="options-grid"><section><h3>{$_('improve.examples.title')}</h3><p class="supporting">{items.length >= 2 ? $_('improve.examples.readyBody') : $_('workspace.autoExamples')}</p><div class="actions-row"><Button variant="secondary" href={`#/task/${task.id}/dataset`}>{$_('improve.examples.open')}</Button><Button variant="ghost" onclick={() => void runIntake()} disabled={isRunning || isPaused || primaryBusy || !canGenerateExamples}>{$_('improve.regenerateExamples')}</Button><Button variant="ghost" onclick={runChecks} disabled={isRunning || isPaused || primaryBusy || items.length < 2}>{$_('improve.check')}</Button></div>
+      {#if preflight}<div class="checks">{#each preflight.steps as step}<p class:error={step.status === 'fail'}>{step.status === 'ok' ? '✓' : '!'} {step.message}</p>{/each}</div>{/if}
+    </section><section>      <details>
         <summary>
           <span>{$_('run.advanced')}</span>
           {#if configEdited}
@@ -853,646 +749,46 @@
         </div>
       </details>
 
-      {#if preflight}
-        <div class="setup-section">
-          <div class="section-head">
-            <span>{$_('improve.preflight.title')}</span>
-            <Tag tone={preflight.ready ? 'ok' : 'err'}>{preflight.ready ? $_('improve.preflight.ready') : $_('improve.preflight.needsWork')}</Tag>
-          </div>
-          <div class="checks">
-            {#each preflight.steps as step, i (`${step.key}-${i}`)}
-              <div class:bad={step.status === 'fail'} class:warn={step.status === 'warn'} class="check-row">
-                <span>{step.status === 'ok' ? '✓' : step.status === 'warn' ? '!' : '×'}</span>
-                <p>{step.message}</p>
-              </div>
-            {/each}
-          </div>
-        </div>
-      {/if}
-    </section>
-  </aside>
+</section></div>
+  </details>
+  {#if hasRunSummary}
+    <details class="options" bind:open={candidateOpen}><summary>{$_('workspace.runDetails')}<span>{taskState.candidates.length} {$_('candidate.title')}</span></summary>
+      {#if candidateOpen}<div class="run-details"><Button variant="ghost" href={`#/task/${task.id}/history`}>{$_('revision.allHistory')}</Button><RunStats /><ProgressChart points={chartPoints} /><CandidateTimeline />{#if config.tokenBudget > 0}<TokenMeter used={(run?.totalTokensIn ?? 0) + (run?.totalTokensOut ?? 0)} budget={config.tokenBudget} />{/if}</div>{/if}
+    </details>
+  {/if}
 </div>
-
-<CompareModal
-  bind:open={compareOpen}
-  taskId={task.id}
-  {config}
-  initialPromptA={task.initialPrompt}
-  initialPromptB={bestCandidate?.text ?? task.seedPrompts[0] ?? task.initialPrompt}
-  {items}
-/>
-
+<ModelSetupDialog bind:open={modelsOpen} />
+{#if compareOpen}<CompareModal bind:open={compareOpen} taskId={task.id} {config} initialPromptA={task.initialPrompt} initialPromptB={bestCandidate?.text ?? task.initialPrompt} {items} />{/if}
 <style>
-  .workspace {
-    display: grid;
-    grid-template-columns: minmax(0, 1fr) 340px;
-    gap: var(--s-5);
-    align-items: start;
-  }
-  .main-flow {
-    min-width: 0;
-    display: flex;
-    flex-direction: column;
-    gap: var(--s-5);
-  }
-  .primary,
-  .result,
-  .run-state,
-  .panel {
-    padding: var(--s-5);
-  }
-  .primary {
-    display: flex;
-    flex-direction: column;
-    gap: var(--s-5);
-    background: var(--bg-1);
-    border-color: var(--border-2);
-  }
-  .stage-flow,
-  .status-line,
-  .result,
-  .run-state,
-  .candidate-details {
-    animation: surface-enter 220ms var(--ease-out);
-  }
-  .primary-head,
-  .result-head,
-  .panel-head,
-  .run-state-head {
-    display: flex;
-    align-items: flex-start;
-    justify-content: space-between;
-    gap: var(--s-3);
-  }
-  .primary-head p,
-  .result-head p,
-  .panel-copy,
-  .empty-result p {
-    color: var(--ink-2);
-    margin: var(--s-1) 0 0;
-    max-width: 68ch;
-    font-size: var(--fs-sm);
-    line-height: 1.5;
-  }
-  .primary-head h2,
-  .result-head h3 {
-    font-size: var(--fs-2xl);
-  }
-  .model-row {
-    display: grid;
-    grid-template-columns: minmax(220px, 1fr) minmax(220px, 0.72fr);
-    gap: var(--s-3);
-    align-items: stretch;
-  }
-  .judge-chip {
-    display: flex;
-    flex-direction: column;
-    justify-content: center;
-    gap: 2px;
-    min-width: 0;
-    min-height: 72px;
-    padding: var(--s-3) var(--s-4);
-    background: color-mix(in srgb, var(--bg-2) 80%, black);
-    border: 1px solid var(--border-1);
-    border-radius: var(--r-md);
-    color: var(--ink-2);
-    font-size: var(--fs-sm);
-  }
-  .judge-chip strong {
-    color: var(--ink-1);
-    font-family: var(--font-mono);
-    overflow-wrap: anywhere;
-  }
-  .chip-label {
-    color: var(--ink-3);
-    font-size: var(--fs-xs);
-  }
-  .actions-row,
-  .result-actions {
-    display: flex;
-    flex-wrap: wrap;
-    gap: var(--s-2);
-    align-items: center;
-  }
-  .primary-action {
-    display: inline-flex;
-  }
-  .status-line {
-    display: flex;
-    align-items: center;
-    min-height: 40px;
-    padding: var(--s-3) var(--s-4);
-    background: rgba(159, 191, 216, 0.08);
-    border: 1px solid rgba(159, 191, 216, 0.22);
-    color: var(--ink-2);
-    border-radius: var(--r-md);
-    font-size: var(--fs-sm);
-  }
-  .status-line.error-state {
-    background: rgba(232, 170, 163, 0.1);
-    border-color: rgba(232, 170, 163, 0.3);
-    color: var(--err);
-  }
-  .stage-flow {
-    display: flex;
-    flex-direction: column;
-    gap: var(--s-3);
-    padding-top: var(--s-4);
-    border-top: 1px solid var(--border-1);
-  }
-  .stage-current {
-    display: grid;
-    grid-template-columns: minmax(0, 1fr) auto;
-    gap: var(--s-4);
-    align-items: start;
-  }
-  .stage-copy {
-    min-width: 0;
-  }
-  .stage-copy > span {
-    display: block;
-    color: var(--ink-3);
-    font-size: var(--fs-xs);
-    margin-bottom: 2px;
-  }
-  .stage-copy strong {
-    display: block;
-    color: var(--ink-1);
-    font-size: var(--fs-lg);
-    line-height: var(--lh-tight);
-  }
-  .stage-copy p {
-    margin: var(--s-1) 0 0;
-    color: var(--ink-2);
-    font-size: var(--fs-sm);
-    line-height: 1.45;
-    max-width: 72ch;
-    overflow-wrap: anywhere;
-  }
-  .stage-metrics {
-    display: flex;
-    flex-wrap: wrap;
-    justify-content: flex-end;
-    gap: var(--s-2);
-    max-width: 360px;
-  }
-  .stage-metrics span {
-    min-height: 26px;
-    display: inline-flex;
-    align-items: center;
-    padding: 0 var(--s-2);
-    border-radius: var(--r-sm);
-    background: color-mix(in srgb, var(--bg-2) 72%, black);
-    border: 1px solid var(--border-1);
-    color: var(--ink-2);
-    font-size: var(--fs-xs);
-    font-variant-numeric: tabular-nums;
-  }
-  .stage-meter {
-    position: relative;
-    height: 4px;
-    overflow: hidden;
-    border-radius: var(--r-pill);
-    background: color-mix(in srgb, var(--bg-2) 80%, black);
-  }
-  .stage-meter span {
-    position: absolute;
-    inset: 0 auto 0 0;
-    width: 100%;
-    border-radius: inherit;
-    background: linear-gradient(90deg, var(--acc-sky), var(--primary));
-    transform-origin: left center;
-    transition: transform 220ms var(--ease-out);
-  }
-  .versus-board {
-    display: grid;
-    grid-template-columns: minmax(0, 1fr) auto minmax(0, 1fr);
-    gap: var(--s-2);
-    align-items: stretch;
-  }
-  .versus-board > div {
-    min-width: 0;
-    display: grid;
-    gap: 2px;
-    padding: var(--s-3);
-    border: 1px solid var(--border-1);
-    border-radius: var(--r-md);
-    background: color-mix(in srgb, var(--bg-2) 72%, black);
-  }
-  .versus-board span,
-  .versus-board small {
-    color: var(--ink-3);
-    font-size: var(--fs-xs);
-  }
-  .versus-board strong {
-    min-width: 0;
-    color: var(--ink-1);
-    font-family: var(--font-mono);
-    font-size: var(--fs-sm);
-    overflow: hidden;
-    text-overflow: ellipsis;
-  }
-  .versus {
-    align-self: center;
-    color: var(--ink-4);
-    font-size: var(--fs-xs);
-  }
-  .work-cells {
-    display: grid;
-    grid-template-columns: repeat(auto-fit, minmax(74px, 1fr));
-    gap: var(--s-2);
-  }
-  .work-cells span {
-    min-width: 0;
-    display: inline-flex;
-    align-items: center;
-    justify-content: center;
-    gap: 6px;
-    min-height: 28px;
-    padding: 0 var(--s-2);
-    border: 1px solid var(--border-1);
-    border-radius: var(--r-sm);
-    background: color-mix(in srgb, var(--bg-2) 70%, black);
-    color: var(--ink-3);
-    font-size: var(--fs-xs);
-    font-variant-numeric: tabular-nums;
-    transition: background-color 180ms var(--ease), border-color 180ms var(--ease), color 180ms var(--ease), transform 180ms var(--ease-out);
-  }
-  .work-cells i {
-    width: 7px;
-    height: 7px;
-    border-radius: 50%;
-    border: 1px solid currentColor;
-  }
-  .work-cells span.done {
-    color: var(--ok);
-    border-color: rgba(159, 202, 173, 0.28);
-    background: rgba(159, 202, 173, 0.07);
-  }
-  .work-cells span.done i {
-    background: var(--ok);
-    border-color: var(--ok);
-  }
-  .work-cells span.active {
-    color: var(--ink-1);
-    border-color: rgba(238, 183, 124, 0.42);
-    background: rgba(238, 183, 124, 0.1);
-    transform: translateY(-1px);
-  }
-  .work-cells span.active i {
-    background: var(--primary);
-    border-color: var(--primary);
-    animation: stage-pulse 1.15s var(--ease-out) infinite;
-  }
-  .decision-row {
-    display: flex;
-    flex-wrap: wrap;
-    align-items: center;
-    justify-content: space-between;
-    gap: var(--s-2);
-    min-height: 34px;
-    padding: var(--s-2) var(--s-3);
-    border: 1px solid var(--border-1);
-    border-radius: var(--r-md);
-    color: var(--ink-2);
-    background: rgba(159, 191, 216, 0.05);
-    font-size: var(--fs-sm);
-  }
-  .decision-row strong {
-    color: var(--ink-1);
-    font-weight: 600;
-  }
-  .decision-row span {
-    color: var(--ink-3);
-    font-size: var(--fs-xs);
-  }
-  .stage-steps {
-    display: grid;
-    grid-template-columns: repeat(6, minmax(0, 1fr));
-    gap: var(--s-2);
-    padding: 0;
-    margin: 0;
-    list-style: none;
-  }
-  .stage-steps li {
-    min-width: 0;
-    display: flex;
-    align-items: center;
-    gap: 6px;
-    color: var(--ink-4);
-    font-size: var(--fs-xs);
-    line-height: 1.25;
-    transition: color var(--dur-fast) var(--ease), transform var(--dur-fast) var(--ease);
-  }
-  .stage-steps li > span:last-child {
-    min-width: 0;
-    overflow-wrap: anywhere;
-  }
-  .step-dot {
-    flex: 0 0 auto;
-    width: 9px;
-    height: 9px;
-    border-radius: 50%;
-    border: 1px solid currentColor;
-    background: transparent;
-    transition: background-color var(--dur-fast) var(--ease), box-shadow var(--dur-fast) var(--ease), border-color var(--dur-fast) var(--ease);
-  }
-  .stage-steps li.done {
-    color: var(--ink-2);
-  }
-  .stage-steps li.done .step-dot {
-    background: var(--ok);
-    border-color: var(--ok);
-  }
-  .stage-steps li.active {
-    color: var(--ink-1);
-    transform: translateY(-1px);
-  }
-  .stage-steps li.active .step-dot {
-    background: var(--primary);
-    border-color: var(--primary);
-    box-shadow: 0 0 0 5px rgba(238, 183, 124, 0.12);
-    animation: stage-pulse 1.15s var(--ease-out) infinite;
-  }
-  .stage-steps li.error {
-    color: var(--err);
-  }
-  .stage-steps li.error .step-dot {
-    background: var(--err);
-    border-color: var(--err);
-    box-shadow: 0 0 0 5px rgba(232, 170, 163, 0.12);
-  }
-  .side {
-    display: flex;
-    flex-direction: column;
-    gap: var(--s-4);
-  }
-  .panel {
-    display: flex;
-    flex-direction: column;
-    gap: var(--s-4);
-    background: color-mix(in srgb, var(--bg-1) 92%, black);
-  }
-  .panel-head h3 { font-size: var(--fs-lg); }
-  .setup-panel {
-    position: sticky;
-    top: var(--s-4);
-    max-height: calc(100vh - var(--s-8));
-    overflow-y: auto;
-    overscroll-behavior: contain;
-    scrollbar-gutter: stable;
-  }
-  .setup-section {
-    display: flex;
-    flex-direction: column;
-    gap: var(--s-2);
-    padding-top: var(--s-4);
-    border-top: 1px solid var(--border-1);
-  }
-  .setup-section:first-of-type {
-    padding-top: 0;
-    border-top: 0;
-  }
-  .section-head {
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
-    gap: var(--s-2);
-    color: var(--ink-1);
-    font-size: var(--fs-sm);
-    font-weight: 600;
-  }
-  details {
-    border-top: 1px solid var(--border-1);
-    padding-top: var(--s-3);
-  }
-  summary {
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
-    gap: var(--s-2);
-    color: var(--ink-2);
-    cursor: pointer;
-    font-size: var(--fs-sm);
-    list-style: none;
-    transition: color var(--dur-fast) var(--ease);
-  }
-  summary::-webkit-details-marker { display: none; }
-  summary:hover { color: var(--ink-1); }
-  summary::after {
-    content: "+";
-    color: var(--ink-3);
-    font-size: var(--fs-lg);
-    line-height: 1;
-    transition: transform var(--dur-fast) var(--ease), color var(--dur-fast) var(--ease);
-  }
-  details[open] summary::after {
-    content: "-";
-    color: var(--primary);
-  }
-  .settings-reset {
-    display: grid;
-    gap: var(--s-2);
-    margin-top: var(--s-3);
-    padding: var(--s-3);
-    border: 1px solid var(--border-1);
-    border-radius: var(--r-sm);
-    background: color-mix(in srgb, var(--bg-2) 72%, black);
-  }
-  .settings-reset p {
-    margin: 0;
-    color: var(--ink-3);
-    font-size: var(--fs-xs);
-    line-height: 1.45;
-  }
-  .settings-reset :global(.btn) {
-    justify-self: start;
-  }
-  .fields {
-    display: grid;
-    grid-template-columns: 1fr;
-    gap: var(--s-3);
-    margin-top: var(--s-3);
-  }
-  details[open] .fields {
-    animation: panel-reveal 180ms var(--ease-out);
-  }
-  .checks {
-    display: flex;
-    flex-direction: column;
-    gap: var(--s-2);
-  }
-  .check-row {
-    display: grid;
-    grid-template-columns: 20px 1fr;
-    gap: var(--s-2);
-    color: var(--ok);
-    font-size: var(--fs-sm);
-  }
-  .check-row p {
-    margin: 0;
-    color: var(--ink-2);
-  }
-  .check-row.warn {
-    color: var(--warn);
-  }
-  .check-row.bad {
-    color: var(--err);
-  }
-  .result {
-    display: flex;
-    flex-direction: column;
-    gap: var(--s-4);
-  }
-  .result pre {
-    max-height: 340px;
-    background: color-mix(in srgb, var(--bg-0) 86%, black);
-    border-color: var(--border-2);
-    white-space: pre-wrap;
-    overflow: auto;
-  }
-  .empty-result {
-    min-height: 140px;
-    display: flex;
-    flex-direction: column;
-    justify-content: center;
-  }
-  .run-details {
-    display: flex;
-    flex-direction: column;
-    gap: var(--s-4);
-  }
-  .run-state {
-    background: color-mix(in srgb, var(--bg-1) 94%, black);
-  }
-  .run-state-head h3 {
-    font-size: var(--fs-lg);
-  }
-  .run-state-head p {
-    margin: var(--s-1) 0 0;
-    color: var(--ink-3);
-    font-size: var(--fs-sm);
-    line-height: 1.45;
-  }
-  .chart {
-    height: 220px;
-    margin-top: var(--s-4);
-    min-width: 0;
-  }
-  .budget {
-    display: inline-flex;
-    align-items: center;
-    gap: var(--s-2);
-  }
-  .candidate-details {
-    padding: var(--s-3) var(--s-4);
-    background: color-mix(in srgb, var(--bg-1) 94%, black);
-    border: 1px solid var(--border-1);
-    border-radius: var(--r-lg);
-  }
-  .candidate-details summary {
-    min-height: 30px;
-  }
-  .candidate-details[open] summary {
-    margin-bottom: var(--s-3);
-  }
-  @media (max-width: 980px) {
-    .workspace {
-      grid-template-columns: 1fr;
-    }
-    .setup-panel {
-      position: static;
-      max-height: none;
-      overflow: visible;
-      scrollbar-gutter: auto;
-    }
-    .stage-steps {
-      grid-template-columns: repeat(3, minmax(0, 1fr));
-    }
-  }
-  @media (max-width: 680px) {
-    .workspace { gap: var(--s-4); }
-    .primary,
-    .result,
-    .run-state,
-    .panel {
-      padding: var(--s-4);
-    }
-    .primary {
-      gap: var(--s-4);
-    }
-    .judge-chip {
-      min-height: 58px;
-    }
-    .model-row {
-      grid-template-columns: 1fr;
-    }
-    .stage-current {
-      grid-template-columns: 1fr;
-    }
-    .stage-metrics {
-      justify-content: flex-start;
-      max-width: none;
-    }
-    .stage-steps {
-      grid-template-columns: repeat(2, minmax(0, 1fr));
-    }
-    .versus-board {
-      grid-template-columns: 1fr;
-    }
-    .versus {
-      justify-self: center;
-    }
-    .primary-head,
-    .result-head,
-    .panel-head,
-    .run-state-head {
-      flex-direction: column;
-    }
-    .primary-head {
-      flex-direction: row;
-      align-items: flex-start;
-    }
-    .primary-head > div {
-      min-width: 0;
-    }
-    .primary-head h2,
-    .result-head h3 {
-      font-size: var(--fs-xl);
-    }
-    .actions-row :global(button) {
-      min-width: 0;
-    }
-    .actions-row {
-      display: grid;
-      grid-template-columns: 1fr 1fr;
-      align-items: stretch;
-    }
-    .primary-action {
-      grid-column: 1 / -1;
-    }
-    .actions-row :global(.btn) {
-      width: 100%;
-      min-height: 44px;
-      height: auto;
-      padding-block: var(--s-2);
-      white-space: normal;
-    }
-    .actions-row :global(.label) {
-      text-align: center;
-      line-height: 1.25;
-    }
-  }
-  @keyframes surface-enter {
-    from { opacity: 0; transform: translateY(6px); }
-    to { opacity: 1; transform: translateY(0); }
-  }
-  @keyframes panel-reveal {
-    from { opacity: 0; transform: translateY(-4px); }
-    to { opacity: 1; transform: translateY(0); }
-  }
-  @keyframes stage-pulse {
-    0%, 100% { box-shadow: 0 0 0 4px rgba(238, 183, 124, 0.1); }
-    50% { box-shadow: 0 0 0 8px rgba(238, 183, 124, 0.18); }
-  }
+  .workspace { display:flex; flex-direction:column; gap:18px; max-width:840px; margin:0 auto; }
+  .workspace-header,.workbench-heading,.section-head,.decision-row,.editor-footer { display:flex; align-items:center; justify-content:space-between; gap:20px; }
+  .flow-nav { display:flex; gap:24px; align-items:center; }
+  .flow-nav button { min-height:44px; color:var(--ink-3); font-size:13px; }
+  .flow-nav button span { font:11px var(--font-mono); margin-right:6px; opacity:.7; }
+  .flow-nav button.current { color:var(--ink-1); }
+  .flow-nav button:disabled { cursor:default; opacity:.5; }
+  .save-status { font-size:11px; color:var(--ink-3); }
+  .workbench { min-width:0; animation:surface-enter 180ms var(--ease-out); }
+  .workbench-heading { position:relative; margin-top:28px; margin-bottom:32px; align-items:flex-start; }.workbench-heading > div { width:100%; }.workbench-heading > :global(.btn) { position:absolute; right:0; top:-8px; }
+  h2 { font-size:34px; font-weight:600; margin:16px 0 12px; letter-spacing:-.035em; line-height:1.2; }
+  .eyebrow { color:var(--secondary); font-size:11px; font-weight:600; letter-spacing:.09em; text-transform:uppercase; }
+  h3 { font-size:15px; font-weight:500; }
+  .supporting { color:var(--ink-3); font-size:12px; line-height:1.7; margin:0; }
+  .proposed-prompt { white-space:pre-wrap; overflow-wrap:anywhere; font-size:26px; line-height:1.6; letter-spacing:-.015em; max-height:560px; overflow:auto; padding:6px 4px; }
+  .proposed-prompt .added { text-decoration:underline; text-decoration-color:var(--secondary); text-decoration-thickness:1px; text-underline-offset:7px; }
+  .original { margin:22px 0 0; padding-bottom:24px; }
+  .arbiter-note { border-top:1px solid var(--border-2); padding-top:24px; }.arbiter-note>span { font-size:13px; color:var(--ink-2); }.arbiter-note>p { font-size:18px; line-height:1.6; margin:8px 0 16px; }
+  .evidence-meta { display:flex; gap:14px; flex-wrap:wrap; color:var(--ink-3); font-size:12px; }
+  .decision-row { margin:28px 0 18px; flex-wrap:wrap; }.completion { color:var(--ink-3); font-size:11px; margin:16px 0 0; }
+  .actions-row { display:flex; align-items:center; gap:8px; flex-wrap:wrap; }.decision-actions { margin-right:auto; }.decision-actions :global(.btn.lg) { min-width:240px; height:56px; justify-content:flex-start; padding:0 24px; font-size:16px; }
+  .output-tools { display:flex; justify-content:flex-start; gap:8px; padding-top:12px; }
+  .editor-footer { align-items:flex-start; margin-top:20px; }.editor-footer>.supporting { max-width:50ch; }
+  .prompt-editor :global(.lbl) { display:none; }.prompt-editor :global(.cm-editor) { background:transparent !important; border-radius:3px !important; font-size:14px !important; }.prompt-editor :global(.cm-content) { padding:24px 16px !important; }.prompt-editor :global(.cm-gutters) { padding-top:10px; }
+  .run-strip { padding:16px 0; border-bottom:1px solid var(--border-1); display:grid; gap:12px; animation:surface-enter 180ms var(--ease-out); }
+  .stage-meter { height:2px; background:var(--bg-3); overflow:hidden; }.stage-meter span { display:block; width:100%; height:100%; background:var(--secondary); transform-origin:left; transition:transform 180ms var(--ease-out); }
+  .stage-steps { list-style:none; padding:0; margin:0; display:flex; gap:20px; flex-wrap:wrap; color:var(--ink-3); font-size:11px; }.stage-steps li.active { color:var(--ink-1); }.stage-steps li.done { color:var(--ok); }.error { color:var(--err); font-size:13px; }
+  details summary { cursor:pointer; font-size:13px; min-height:48px; padding:12px 0; color:var(--ink-2); } summary span { float:right; color:var(--ink-3); font-size:12px; }
+  .options { border-top:1px solid var(--border-1); }.options-grid { display:grid; grid-template-columns:1fr 1fr; gap:40px; padding:16px 0 24px; }.options-grid section { min-width:0; display:grid; gap:12px; align-content:start; }.fields { display:grid; gap:12px; }.evidence { border-bottom:1px solid var(--border-1); }.evidence p,.evidence h4,.evidence pre { margin:8px 0 12px; }.evidence h4 { font-size:13px; }.evidence p { font-size:13px; color:var(--ink-2); }.evidence pre { white-space:pre-wrap; font-size:12px; max-height:240px; overflow:auto; }.evidence :global(.btn) { margin:8px 0 20px; }
+  .run-details { padding:12px 0 20px; display:grid; gap:20px; }.notice { border-left:2px solid var(--warn); padding:12px 16px; color:var(--warn); font-size:13px; }.notice a { margin-left:12px; }.checks { font-size:13px; }.settings-reset p { font-size:13px; color:var(--ink-2); }
+  @media(max-width:780px) { .workspace { gap:18px; }.workspace-header { align-items:flex-start; flex-wrap:wrap; gap:0; }.flow-nav { gap:16px; }.save-status { flex-basis:100%; }.workbench-heading { gap:12px; margin-bottom:16px; }h2 { font-size:28px; }.proposed-prompt { font-size:19px; }.arbiter-note>p { font-size:16px; }.workbench-heading { margin-top:12px; }.decision-actions :global(.btn.lg) { min-width:0; width:100%; justify-content:center; }.decision-row { gap:16px; }.decision-actions { width:100%; justify-content:flex-start; }.editor-footer { flex-direction:column; gap:12px; }.editor-footer>.actions-row { align-self:flex-end; }.options-grid { grid-template-columns:1fr; gap:20px; }.section-head { align-items:flex-start; flex-wrap:wrap; }.stage-steps { gap:10px; }summary span { float:none; display:block; font-size:11px; margin-top:3px; }.prompt-editor :global(.cm-content) { padding:16px 8px !important; } }
 </style>

@@ -5,6 +5,7 @@ import { tryParseJson } from './extract-json'
 import { judgeRoute } from './judge'
 
 export interface MutatorArgs {
+  signal?: AbortSignal
   provider: ProviderConfig
   arbitrator?: ArbitratorConfig
   taskDescription: string
@@ -48,6 +49,7 @@ export async function runMutator(args: MutatorArgs): Promise<MutatorResult> {
     baseUrl: route.baseUrl,
     apiKey: route.apiKey,
     model: route.model,
+    signal: args.signal,
     messages: [
       { role: 'system', content: mutatorSystemPrompt },
       { role: 'user', content: userMsg },
