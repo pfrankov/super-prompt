@@ -10,6 +10,7 @@
   import { navigate } from '../stores/router'
   import { t } from '../stores/toast'
   import Tag from '../components/ui/Tag.svelte'
+  import { activeRunId, optimizationState } from '../stores/worker'
 
   let { onCreateTask }: { onCreateTask?: () => void } = $props()
 
@@ -44,7 +45,7 @@
   }
 
   async function onDeleteConfirm() {
-    if (!deleteTarget) return
+    if (!deleteTarget || $activeRunId && $optimizationState.run?.taskId === deleteTarget.id) return
     const id = deleteTarget.id
     deleteOpen = false
     deleteTarget = null
@@ -95,7 +96,7 @@
       <div class="card surface" role="button" tabindex="0" onclick={() => navigate(`/task/${task.id}`)} onkeydown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); navigate(`/task/${task.id}`) } }}>
         <div class="card-head">
           <h3 class="card-title">{task.name || $_('common.untitled')}</h3>
-          <button class="del" type="button" onclick={(e) => onDeleteClick(task, e)} onkeydown={(e) => onDeleteKey(task, e)} aria-label={$_('common.delete')}>
+          <button class="del" type="button" disabled={!!$activeRunId && $optimizationState.run?.taskId === task.id} onclick={(e) => onDeleteClick(task, e)} onkeydown={(e) => onDeleteKey(task, e)} aria-label={$_('common.delete')}>
             <svg viewBox="0 0 20 20" width="14" height="14"><path d="M5 6h10M8 6V4h4v2M7 6l1 10h4l1-10" stroke="currentColor" stroke-width="1.4" fill="none" stroke-linecap="round" stroke-linejoin="round"/></svg>
           </button>
         </div>

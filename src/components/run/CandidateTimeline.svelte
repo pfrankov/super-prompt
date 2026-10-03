@@ -4,7 +4,9 @@
   import Tag from '../ui/Tag.svelte'
   import { optimizationState } from '../../stores/worker'
 
-  const state = $derived($optimizationState)
+  const timelineState = $derived($optimizationState)
+  let limit = $state(20)
+  const visible = $derived(timelineState.candidates.slice(-limit).toReversed())
 
   function scoreColor(score: number | null): string {
     if (score == null) return 'var(--ink-3)'
@@ -16,19 +18,19 @@
 
 <div class="timeline">
   <h4 class="title">{$_('candidate.title')}</h4>
-  {#if state.candidates.length === 0}
+  {#if timelineState.candidates.length === 0}
     <p class="muted">-</p>
   {:else}
     <ol class="list">
-      {#each state.candidates as c (c.id)}
-        {@const isBest = c.id === state.run?.bestCandidateId}
+      {#each visible as c (c.id)}
+        {@const isBest = c.id === timelineState.run?.bestCandidateId}
         <li class="cand" class:best={isBest}>
           <div class="cand-head">
             <Tag tone={c.source === 'seed' ? 'accent' : 'neutral'}>{c.source}</Tag>
             <span class="score numeric" style="color: {scoreColor(c.score)}">{c.score != null ? c.score.toFixed(2) : '-'}</span>
             {#if isBest}<Tag tone="ok">best</Tag>{/if}
           </div>
-          <div class="cand-text">{c.text}</div>
+          <div class="cand-text">{c.text.slice(0, 600)}{c.text.length > 600 ? '…' : ''}</div>
           {#if c.rationale}
             <div class="rationale">{c.rationale}</div>
           {/if}
@@ -39,6 +41,8 @@
         </li>
       {/each}
     </ol>
+    <p class="dim">{$_('workspace.candidatePage', { values:{count:visible.length,total:timelineState.candidates.length} })}</p>
+    {#if limit < timelineState.candidates.length}<button type="button" onclick={() => limit += 20}>{$_('workspace.moreCandidates')}</button>{/if}
   {/if}
 </div>
 
@@ -54,7 +58,7 @@
     padding: var(--s-3);
     display: flex; flex-direction: column; gap: 4px;
   }
-  .cand.best { border-color: rgba(238, 183, 124, 0.65); box-shadow: 0 0 0 1px rgba(238, 183, 124, 0.3); }
+  .cand.best { border-color: rgba(156, 174, 255, 0.65); box-shadow: 0 0 0 1px rgba(156, 174, 255, 0.3); }
   .cand-head { display: flex; align-items: center; gap: var(--s-2); }
   .score { font-size: var(--fs-lg); font-weight: 600; }
   .cand-text {
