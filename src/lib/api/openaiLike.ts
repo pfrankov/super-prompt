@@ -1,4 +1,5 @@
 import { ApiError } from './errors'
+import { withBackoff } from './retry'
 import { withModelRateLimit } from './modelRateLimit'
 import { isMockProviderUrl, mockChatCompletion } from './mockOpenai'
 import type { ModelRateLimitRule } from '../types'
@@ -207,7 +208,6 @@ export async function chatCompletionWithRetry(
   maxRetries = 5,
   onRetry?: (info: { attempt: number; delayMs: number }) => void
 ): Promise<ChatResponse> {
-  const { withBackoff } = await import('./retry')
   return withBackoff(() => chatCompletion(req), {
     maxRetries,
     baseMs: 500,

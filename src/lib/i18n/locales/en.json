@@ -530,6 +530,7 @@
     "apply": "Use this revision",
     "chooseModels": "Choose models",
     "restored": "Previous prompt restored",
+    "changedElsewhere": "This prompt changed in another tab. Review the latest saved version before trying again.",
     "currentBest": "Your current prompt is the best evaluated version. You can edit it or run another iteration.",
     "complete": "Completed",
     "readyReview": "Ready to review",

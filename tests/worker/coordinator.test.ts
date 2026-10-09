@@ -46,11 +46,23 @@ describe('worker request coordination', () => {
     let release!: (value: unknown) => void
     mocks.getRun.mockReturnValueOnce(new Promise((resolve)=>{release=resolve}))
     const first = send({type:'START',payload:{runId:'run-a'}})
+    await send({type:'PAUSE',payload:{runId:'run-a'}})
     await send({type:'STOP',payload:{runId:'run-a'}})
     release({id:'run-a',taskId:'a',config,status:'idle'})
     await first
     expect(mocks.createRunner).not.toHaveBeenCalled()
     expect(mocks.patchRun).toHaveBeenCalledWith('run-a',expect.objectContaining({status:'stopped'}))
+  })
+  it('does not carry a pending pause into a later run after startup fails', async () => {
+    let reject!: (error: Error) => void
+    mocks.getRun.mockReturnValueOnce(new Promise((_resolve, fail) => { reject = fail }))
+    const first = send({type:'START',payload:{runId:'run-a'}})
+    await send({type:'PAUSE',payload:{runId:'run-a'}})
+    reject(new Error('Startup read failed'))
+    await first
+    await send({type:'START',payload:{runId:'run-b'}})
+    expect(mocks.createRunner).toHaveBeenCalledTimes(1)
+    expect(mocks.createRunner).toHaveBeenCalledWith(expect.objectContaining({runId:'run-b',startPaused:false}))
   })
 })
 

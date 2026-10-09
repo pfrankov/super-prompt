@@ -1,5 +1,7 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
+import { EditorState } from '@codemirror/state'
 import { EditorView } from '@codemirror/view'
+import { undo, undoDepth } from '@codemirror/commands'
 import { flushSync } from 'svelte'
 import { createClassComponent } from 'svelte/legacy'
 import CodeMirrorEditor from '../../src/components/ui/CodeMirrorEditor.svelte'
@@ -55,5 +57,37 @@ describe('prompt editor source preservation', () => {
     expect(oninput).not.toHaveBeenCalled()
     flushSync(() => view.dispatch({ changes: { from: view.state.doc.length, insert: 'Typed 🧭' }, userEvent: 'input.type' }))
     expect(oninput).toHaveBeenCalledExactlyOnceWith('Original\nTyped 🧭')
+  })
+
+  it('toggles read-only without replacing the editor or losing its document, selection, or undo history', () => {
+    const { component, view, oninput } = editor('Prompt')
+    flushSync(() => view.dispatch({ changes: { from: 6, insert: ' draft' }, selection: { anchor: 3 }, userEvent: 'input.type' }))
+    const element = view.dom
+    const selection = view.state.selection
+    const historyDepth = undoDepth(view.state)
+    oninput.mockClear()
+
+    flushSync(() => component.$set({ readonly: true }))
+    expect(EditorView.findFromDOM(element)).toBe(view)
+    expect(view.state.facet(EditorView.editable)).toBe(false)
+    expect(view.state.facet(EditorState.readOnly)).toBe(true)
+    expect(view.contentDOM.getAttribute('contenteditable')).toBe('false')
+    expect(view.state.doc.toString()).toBe('Prompt draft')
+    expect(view.state.selection.eq(selection)).toBe(true)
+    expect(undoDepth(view.state)).toBe(historyDepth)
+    expect(undo(view)).toBe(false)
+    expect(oninput).not.toHaveBeenCalled()
+
+    flushSync(() => component.$set({ readonly: false }))
+    expect(EditorView.findFromDOM(element)).toBe(view)
+    expect(view.state.facet(EditorView.editable)).toBe(true)
+    expect(view.state.facet(EditorState.readOnly)).toBe(false)
+    expect(view.contentDOM.getAttribute('contenteditable')).toBe('true')
+    expect(view.state.doc.toString()).toBe('Prompt draft')
+    expect(view.state.selection.eq(selection)).toBe(true)
+    expect(undoDepth(view.state)).toBe(historyDepth)
+    expect(oninput).not.toHaveBeenCalled()
+    flushSync(() => expect(undo(view)).toBe(true))
+    expect(view.state.doc.toString()).toBe('Prompt')
   })
 })
