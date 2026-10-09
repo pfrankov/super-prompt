@@ -11,6 +11,13 @@ export class TaskNotFoundError extends Error {
   }
 }
 
+export class TaskPromptConflictError extends Error {
+  constructor(readonly current: Task) {
+    super('This prompt changed in another tab.')
+    this.name = 'TaskPromptConflictError'
+  }
+}
+
 export async function listTasks(): Promise<Task[]> {
   const d = await db()
   const all = await d.getAll('tasks')
@@ -34,24 +41,37 @@ export function patchTask(id: string, update: TaskUpdate): Promise<Task> {
   const write: Promise<Task> = previous.catch(() => {}).then(async () => {
     const d = await db()
     const tx = d.transaction('tasks', 'readwrite')
-    const current = await tx.store.get(id)
-    if (!current) {
-      await tx.done
-      throw new TaskNotFoundError(id)
+    const finished = tx.done
+    void finished.catch(() => {})
+    try {
+      const current = await tx.store.get(id)
+      if (!current) throw new TaskNotFoundError(id)
+      const patch = typeof update === 'function' ? update(current) : update
+      const next = { ...current, ...patch, id: current.id, createdAt: current.createdAt, updatedAt: Date.now() }
+      await tx.store.put(next)
+      await finished
+      // An older matching write must not erase a reverted draft while a newer
+      // write is still queued. The final commit can clear only its durable text.
+      if (pendingWrites.get(id) === write) clearPromptDraft(id, next.initialPrompt)
+      return next
+    } catch (error) {
+      try { tx.abort() } catch { /* Already settled. */ }
+      await finished.catch(() => {})
+      throw error
     }
-    const patch = typeof update === 'function' ? update(current) : update
-    const next = { ...current, ...patch, id: current.id, createdAt: current.createdAt, updatedAt: Date.now() }
-    await tx.store.put(next)
-    await tx.done
-    // An older matching write must not erase a reverted draft while a newer
-    // write is still queued. The final commit can clear only its durable text.
-    if (pendingWrites.get(id) === write) clearPromptDraft(id, next.initialPrompt)
-    return next
   })
   pendingWrites.set(id, write)
   const cleanup = () => { if (pendingWrites.get(id) === write) pendingWrites.delete(id) }
   void write.then(cleanup, cleanup)
   return write
+}
+
+/** Apply/Undo must compare the durable prompt and replace it in one transaction. */
+export function replaceTaskPrompt(id: string, expectedPrompt: string, initialPrompt: string): Promise<Task> {
+  return patchTask(id, (current) => {
+    if (current.initialPrompt !== expectedPrompt) throw new TaskPromptConflictError(current)
+    return { initialPrompt }
+  })
 }
 
 /** Explicit full-task replacement; editor autosaves should use patchTask. */

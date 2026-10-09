@@ -40,6 +40,8 @@ The provider must support browser CORS and OpenAI-compatible `/chat/completions`
 5. Review the proposed wording, line-by-line changes and evaluation evidence, then apply the revision or keep your current prompt. Large revisions use reading pages; Copy, Export and Apply always use the complete prompt
 6. Undo the last apply while that exact applied text is still current. Editing the prompt invalidates this undo so it cannot overwrite later work
 
+Apply and Undo check the saved prompt in the same transaction that replaces it. If another tab has saved a different prompt, the action leaves that text intact and shows it for review before retrying. Both actions wait for pending local edits to save, and update the displayed prompt and Undo only after their own write commits. Their pending state follows same-tab navigation, so reopening the task cannot act on its pre-commit prompt. A failed revision write leaves the current prompt and previous Undo available for retry. If an earlier autosave failed, save your current edits with **Save** before applying a revision; Apply does not silently retry that failed write.
+
 Pause takes effect between iterations. Stop cancels pending requests; a provider may still charge for work already started. Navigating between tabs preserves a live run. Reloading ends the worker and marks an interrupted run stopped when it is reopened.
 
 Prompt edits are saved automatically. A temporary session-storage draft protects the latest prompt during reload and is cleared after the matching IndexedDB write. A pending/failed save warns before leaving. The last apply also keeps one undo record in this tab’s session storage, including across reload; deleting a task or wiping prompt data removes these temporary copies. Other task fields in Overview use the explicit Save action.
@@ -75,6 +77,7 @@ Synthetic timings are not a human usability study. Mocks prove workflow behavior
 - Current Chrome, Firefox, or Safari with IndexedDB, Web Workers, and modern JavaScript is required; automated browser checks use Chromium
 - API responses are not streamed. Usage is counted when returned by the provider; cancelled or failed requests may incur charges without returning usage
 - Token budgets are checked between iterations, so a single iteration can exceed the remaining budget
+- Conditional Apply/Undo does not merge ordinary simultaneous edits or recovered drafts from different tabs; those autosaves still use the last write
 - Newest-first history still reads/sorts run metadata because schema version 1 has no task/date index. Dataset import/export and run preparation still process complete datasets; bounded visible pages do not make every operation constant-memory
 - Browser storage is local and may be cleared by the browser. Export important results and datasets
 

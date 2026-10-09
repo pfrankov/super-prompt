@@ -29,6 +29,8 @@ Both route interception and the fixture server's CSP constrain browser traffic.
   behind the Original wording disclosure; the proposed prompt is the default view
 - Use this revision and Undo last apply preserve exact text, including Unicode
   and blank lines; undo survives same-tab reload and is invalidated by later edits
+- Stale Apply/Undo preserve edits saved in a second tab across reload; an
+  intentional Apply retry uses the latest saved prompt as its undo baseline
 - A 5,000-line complete replacement keeps diff rendering within 200 chunks and
   32,000 characters per page, explicitly reports limited matching, replaces
   pages rather than appending them, and preserves full export/apply/undo content

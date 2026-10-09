@@ -5,8 +5,8 @@
   import type { Dataset, DatasetItem, RunConfig, RunStage, RunStageKey, Task } from '../../lib/types'
   import { replaceGeneratedItems, ensureTaskDataset, getAllItems, getDataset } from '../../lib/db/datasets'
   import { getCandidates, getIterations, getRun, listRuns, patchRun } from '../../lib/db/runs'
-  import { patchTask } from '../../lib/db/tasks'
-  import { readPromptDraft, stagePromptDraft } from '../../lib/db/prompt-drafts'
+  import { getTask, patchTask, replaceTaskPrompt, TaskPromptConflictError } from '../../lib/db/tasks'
+  import { clearPromptDraft, readPromptDraft, stagePromptDraft } from '../../lib/db/prompt-drafts'
   import { settings } from '../../stores/settings'
   import { optimizationState, activeRunId, preparingTaskId, pause, resume, prepareAndStartRun, stop, getState } from '../../stores/worker'
   import { t } from '../../stores/toast'
@@ -16,7 +16,7 @@
   import { nextPreflightAction, runPreflight, type PreflightResult } from '../../lib/improve/preflight'
   import { judgeRoute } from '../../lib/optimizer/judge'
 
-  import { readAppliedRevision, storeAppliedRevision, type AppliedRevision } from '../../lib/improve/applied-revision'
+  import { beginPendingRevision, pendingRevision, pendingRevisionTaskIds, readAppliedRevision, storeAppliedRevision, type AppliedRevision } from '../../lib/improve/applied-revision'
   import PromptDiff from './PromptDiff.svelte'
   import { diffPrompts, getPromptReaderPage, getPromptReaderSegments, type PromptReaderCursor } from '../../lib/improve/prompt-diff'
   import Button from '../ui/Button.svelte'
@@ -64,6 +64,11 @@
   let view = $state<'auto' | 'edit' | 'review'>('auto')
   let originalOpen = $state(false)
   let appliedRevision = $state<AppliedRevision | null>(null)
+  let appliedRevisionTaskId = task.id
+  const inheritedRevisionAtCreation = pendingRevision(task.id)
+  let inheritedRevisionPending = $state(!!inheritedRevisionAtCreation)
+  const revisionSaving = $derived(inheritedRevisionPending || $pendingRevisionTaskIds.has(task.id))
+  let revisionError = $state('')
   let detailsOpen = $state(false)
   let candidateOpen = $state(false)
   let alive = true
@@ -200,6 +205,16 @@
   const stageProgress = $derived(stageProgressPercent())
 
   $effect(() => {
+    const id = task.id
+    const currentPrompt = task.initialPrompt
+    // A revision can finish after this workspace remounts. Preserve a valid
+    // in-memory Undo, otherwise pick up the committed same-tab handoff.
+    if (appliedRevisionTaskId === id && appliedRevision?.after === currentPrompt) return
+    appliedRevisionTaskId = id
+    appliedRevision = readAppliedRevision(id, currentPrompt)
+  })
+
+  $effect(() => {
     if (configEdited) return
     $settings.provider.baseUrl
     items.length
@@ -207,12 +222,38 @@
   })
 
   onMount(async () => {
+    const inheritedTaskId = task.id
+    const inheritedRevision = inheritedRevisionAtCreation ?? pendingRevision(inheritedTaskId)
+    if (inheritedRevision) inheritedRevisionPending = true
+    if (inheritedRevision) await inheritedRevision
+    if (!alive || task.id !== inheritedTaskId) return
+    if (inheritedRevision) {
+      // Reopening the task creates a new binding that the previous workspace
+      // cannot update. Reload after its revision settles; getTask also keeps a
+      // newer recovery draft made while the command was pending.
+      let current: Task | undefined
+      try { current = await getTask(inheritedTaskId) }
+      catch {
+        if (alive && task.id === inheritedTaskId) {
+          revisionError = $_('workspace.saveFailed')
+          t.error(revisionError)
+        }
+        return
+      }
+      if (!alive || task.id !== inheritedTaskId) return
+      if (!current) {
+        revisionError = $_('workspace.saveFailed')
+        t.error(revisionError)
+        return
+      }
+      task = current
+    }
+    inheritedRevisionPending = false
     const recovered = readPromptDraft(task.id)
     if (recovered !== null) {
       task = { ...task, initialPrompt: recovered }
       persistTask()
     }
-    appliedRevision = readAppliedRevision(task.id, task.initialPrompt)
     await loadItems()
     if (alive) await hydrateLatestRun()
   })
@@ -301,6 +342,7 @@
   }
 
   function scheduleTaskSave() {
+    revisionError = ''
     if (appliedRevision && task.initialPrompt !== appliedRevision.after) {
       appliedRevision = null
       storeAppliedRevision(task.id, null)
@@ -496,6 +538,7 @@
   }
 
   async function runIntake(): Promise<boolean> {
+    if (revisionSaving) return false
     const operation = preparation
     if (!task.initialPrompt.trim() || !$settings.provider.targetModel.trim()) return false
     const fp = promptFingerprint(task.initialPrompt)
@@ -562,6 +605,7 @@
   }
 
   async function runChecks(): Promise<boolean> {
+    if (revisionSaving) return false
     const operation = preparation
     preflightController?.abort()
     preflightController = new AbortController()
@@ -596,7 +640,7 @@
   }
 
   async function improve() {
-    if (primaryBusy || $activeRunId || !task.initialPrompt.trim()) return
+    if (primaryBusy || revisionSaving || $activeRunId || !task.initialPrompt.trim()) return
     if (!configured) { modelsOpen = true; return }
     const operation = ++preparation
     flowState = 'starting'
@@ -634,29 +678,67 @@
     t.success($_('common.copied'))
   }
 
+  async function commitRevision(initialPrompt: string, nextUndo: AppliedRevision | null, message: string) {
+    if (revisionSaving || isRunning || isPaused || primaryBusy) return
+    const { id, initialPrompt: expectedPrompt } = taskSnapshot()
+    const version = editVersion
+    const unchanged = () => task.id === id && task.initialPrompt === expectedPrompt && editVersion === version
+    const lease = beginPendingRevision(id)
+    if (!lease) return
+    revisionError = ''
+    try {
+      // Finish pending edits, but never silently retry a failed autosave or
+      // save a clean snapshot: either could overwrite another tab before CAS.
+      if (taskSaveTimer) {
+        clearTimeout(taskSaveTimer)
+        persistTask()
+      }
+      await saveQueue
+      if (!unchanged()) return
+      const saved = await replaceTaskPrompt(id, expectedPrompt, initialPrompt)
+      storeAppliedRevision(id, nextUndo)
+      if (!unchanged()) return
+      // Earlier queued saves may have retained the matching recovery copy.
+      // This committed replacement supersedes it, but never a different draft.
+      clearPromptDraft(id, expectedPrompt)
+      // TaskDetail keeps this binding when switching to Overview. Publish the
+      // committed text there too, unless the new editor already changed it.
+      task = { ...task, initialPrompt: saved.initialPrompt }
+      if (!alive) return
+      appliedRevision = nextUndo
+      preflight = null
+      flowError = ''
+      t.success(message)
+    } catch (error) {
+      if (!unchanged()) return
+      if (error instanceof TaskPromptConflictError) {
+        clearPromptDraft(id, expectedPrompt)
+        task = { ...task, initialPrompt: error.current.initialPrompt }
+        storeAppliedRevision(id, null)
+      }
+      if (!alive) return
+      if (error instanceof TaskPromptConflictError) {
+        appliedRevision = null
+        preflight = null
+        revisionError = $_('revision.changedElsewhere')
+      } else {
+        revisionError = $_('workspace.saveFailed')
+      }
+      t.error(revisionError)
+    } finally {
+      lease.release()
+    }
+  }
+
   async function applyBest() {
-    if (!bestCandidate || bestIsCurrent || isRunning || isPaused || primaryBusy) return
-    appliedRevision = { before: task.initialPrompt, after: bestCandidate.text }
-    storeAppliedRevision(task.id, appliedRevision)
-    task = { ...task, initialPrompt: bestCandidate.text }
-    scheduleTaskSave()
-    if (taskSaveTimer) clearTimeout(taskSaveTimer)
-    persistTask()
-    try { await saveQueue; t.success($_('actions.saved')) }
-    catch { t.error($_('workspace.saveFailed')) }
+    if (!bestCandidate || bestIsCurrent) return
+    const revision = { before: task.initialPrompt, after: bestCandidate.text }
+    await commitRevision(revision.after, revision, $_('actions.saved'))
   }
 
   async function undoApply() {
-    if (!canUndo || !appliedRevision || isRunning || isPaused || primaryBusy) return
-    const previous = appliedRevision.before
-    appliedRevision = null
-    storeAppliedRevision(task.id, null)
-    task = { ...task, initialPrompt: previous }
-    scheduleTaskSave()
-    if (taskSaveTimer) clearTimeout(taskSaveTimer)
-    persistTask()
-    try { await saveQueue; t.success($_('revision.restored')) }
-    catch { t.error($_('workspace.saveFailed')) }
+    if (!canUndo || !appliedRevision) return
+    await commitRevision(appliedRevision.before, null, $_('revision.restored'))
   }
 
   function exportBest() {
@@ -681,7 +763,7 @@
   }
 
   function beforeUnload(e: BeforeUnloadEvent) {
-    if (saveState === 'saved' && readPromptDraft(task.id) === null) return
+    if (!revisionSaving && saveState === 'saved' && readPromptDraft(task.id) === null) return
     if (taskSaveTimer) { clearTimeout(taskSaveTimer); persistTask() }
     e.preventDefault()
     e.returnValue = ''
@@ -693,11 +775,13 @@
   <div class="workspace-header">
     <nav class="flow-nav" aria-label={$_('revision.workflow')}>
       <button class:current={!reviewing} onclick={() => view = 'edit'} aria-current={!reviewing ? 'step' : undefined}><span>01</span> {$_('revision.prompt')}</button>
-      <button aria-label={$_('workspace.configure')} title={`${$settings.provider.targetModel || $_('revision.notSet')} / ${effectiveJudge.model || $_('revision.notSet')}`} onclick={() => modelsOpen = true} disabled={isRunning || isPaused || primaryBusy}><span>02</span> {$_('revision.models')}</button>
+      <button aria-label={$_('workspace.configure')} title={`${$settings.provider.targetModel || $_('revision.notSet')} / ${effectiveJudge.model || $_('revision.notSet')}`} onclick={() => modelsOpen = true} disabled={isRunning || isPaused || primaryBusy || revisionSaving}><span>02</span> {$_('revision.models')}</button>
       <button class:current={reviewing} onclick={() => view = 'review'} disabled={!bestCandidate} aria-current={reviewing ? 'step' : undefined}><span>03</span> {$_('revision.review')}</button>
     </nav>
-    <span class="save-status" role="status">{isDemo ? `${$_('workspace.demo')} · ` : ''}{saveState === 'saved' ? $_('workspace.saved') : saveState === 'saving' ? $_('workspace.saving') : $_('workspace.saveFailed')}</span>
+    <span class="save-status" role="status">{isDemo ? `${$_('workspace.demo')} · ` : ''}{revisionSaving || saveState === 'saving' ? $_('workspace.saving') : saveState === 'saved' ? $_('workspace.saved') : $_('workspace.saveFailed')}</span>
+    {#if saveState === 'error'}<Button variant="secondary" size="sm" onclick={() => { revisionError = ''; persistTask() }} disabled={revisionSaving}>{$_('common.save')}</Button>{/if}
   </div>
+  {#if revisionError}<p class="error" role="alert">{revisionError}</p>{/if}
   {#if activeElsewhere}
     <div class="notice" role="status">{$_('workspace.activeElsewhere')} <a href={`#/task/${activeTaskId}/improve`}>{$_('workspace.openActive')}</a></div>
   {/if}
@@ -742,9 +826,9 @@
       <div class="decision-row">
 
         <div class="actions-row decision-actions">
-          {#if canUndo}<Button variant="ghost" onclick={undoApply} disabled={isRunning || isPaused || primaryBusy}>{$_('revision.undo')}</Button>{/if}
-          {#if hasPendingRevision}<Button size="lg" onclick={applyBest}>{$_('revision.apply')}</Button><Button variant="ghost" onclick={() => view = 'edit'}>{$_('revision.keep')}</Button>
-          {:else if canStartRun && !primaryBusy}<Button size="lg" onclick={improve} disabled={!task.initialPrompt.trim() || !!$activeRunId}>{$_('improve.primary')}</Button>{/if}
+          {#if canUndo}<Button variant="ghost" onclick={undoApply} disabled={isRunning || isPaused || primaryBusy || revisionSaving}>{$_('revision.undo')}</Button>{/if}
+          {#if hasPendingRevision}<Button size="lg" onclick={applyBest} loading={revisionSaving}>{$_('revision.apply')}</Button><Button variant="ghost" onclick={() => view = 'edit'}>{$_('revision.keep')}</Button>
+          {:else if canStartRun && !primaryBusy}<Button size="lg" onclick={improve} disabled={!task.initialPrompt.trim() || !!$activeRunId || revisionSaving}>{$_('improve.primary')}</Button>{/if}
         </div>
       </div>
       <details class="evidence"><summary>{$_('workspace.why')}</summary>
@@ -752,20 +836,20 @@
         <p>{$_(bestCandidate.iterations === 1 ? 'revision.trialsOne' : 'workspace.trials', { values: { count: bestCandidate.iterations, wins: bestCandidate.wins, losses: bestCandidate.losses, ties: bestCandidate.ties } })}</p>
         {#if bestCandidate.rationale}<h4>{$_('workspace.change')}</h4><p>{bestCandidate.rationale}</p>{/if}
         {#if bestFeedback}<h4>{$_('workspace.feedback')}</h4><p>{$_('revision.feedbackContext')}</p><pre>{bestFeedback}</pre>{/if}
-        <Button variant="secondary" onclick={() => compareOpen = true} disabled={isRunning || isPaused || primaryBusy}>{$_('run.compare')}</Button>
+        <Button variant="secondary" onclick={() => compareOpen = true} disabled={isRunning || isPaused || primaryBusy || revisionSaving}>{$_('run.compare')}</Button>
       </details>
       {#if run?.status === 'completed' && !primaryBusy && flowState !== 'error'}<p class="completion" data-testid="run-status" data-status="completed">{$_('revision.complete')} · {stageIterationText()}</p>{/if}
       <div class="output-tools"><Button variant="ghost" size="sm" onclick={copyBest}>{$_('common.copy')}</Button><Button variant="ghost" size="sm" onclick={exportBest}>{$_('common.export')}</Button></div>
     {:else}
-      <div class="prompt-editor"><PromptEditor bind:value={task.initialPrompt} label={$_('workspace.current')} rows={13} oninput={scheduleTaskSave} /></div>
+      <div class="prompt-editor"><PromptEditor bind:value={task.initialPrompt} label={$_('workspace.current')} rows={13} readonly={revisionSaving} oninput={scheduleTaskSave} /></div>
       <div class="editor-footer"><p class="supporting">{$_('workspace.autoExamples')}</p><div class="actions-row">
-        {#if canUndo}<Button variant="ghost" onclick={undoApply} disabled={isRunning || isPaused || primaryBusy}>{$_('revision.undo')}</Button>{/if}
-        {#if canStartRun}<Button size="lg" onclick={improve} loading={primaryBusy} disabled={!task.initialPrompt.trim() || !!$activeRunId}>{configured ? $_('improve.primary') : $_('revision.chooseModels')}</Button>{/if}
+        {#if canUndo}<Button variant="ghost" onclick={undoApply} disabled={isRunning || isPaused || primaryBusy || revisionSaving}>{$_('revision.undo')}</Button>{/if}
+        {#if canStartRun}<Button size="lg" onclick={improve} loading={primaryBusy} disabled={!task.initialPrompt.trim() || !!$activeRunId || revisionSaving}>{configured ? $_('improve.primary') : $_('revision.chooseModels')}</Button>{/if}
       </div></div>
     {/if}
   </section>
   <details class="options" bind:open={detailsOpen}><summary>{$_('workspace.details')}<span>{$_('improve.examples.count', { values:{count:items.length} })}</span></summary>
-    <div class="options-grid"><section><h3>{$_('improve.examples.title')}</h3><p class="supporting">{items.length >= 2 ? $_('improve.examples.readyBody') : $_('workspace.autoExamples')}</p><div class="actions-row"><Button variant="secondary" href={`#/task/${task.id}/dataset`}>{$_('improve.examples.open')}</Button><Button variant="ghost" onclick={() => void runIntake()} disabled={isRunning || isPaused || primaryBusy || !canGenerateExamples}>{$_('improve.regenerateExamples')}</Button><Button variant="ghost" onclick={runChecks} disabled={isRunning || isPaused || primaryBusy || items.length < 2}>{$_('improve.check')}</Button></div>
+    <div class="options-grid"><section><h3>{$_('improve.examples.title')}</h3><p class="supporting">{items.length >= 2 ? $_('improve.examples.readyBody') : $_('workspace.autoExamples')}</p><div class="actions-row"><Button variant="secondary" href={`#/task/${task.id}/dataset`}>{$_('improve.examples.open')}</Button><Button variant="ghost" onclick={() => void runIntake()} disabled={isRunning || isPaused || primaryBusy || revisionSaving || !canGenerateExamples}>{$_('improve.regenerateExamples')}</Button><Button variant="ghost" onclick={runChecks} disabled={isRunning || isPaused || primaryBusy || revisionSaving || items.length < 2}>{$_('improve.check')}</Button></div>
       {#if preflight}<div class="checks">{#each preflight.steps as step}<p class:error={step.status === 'fail'}>{step.status === 'ok' ? '✓' : '!'} {step.message}</p>{/each}</div>{/if}
     </section><section>      <details>
         <summary>
