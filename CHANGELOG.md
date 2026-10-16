@@ -2,8 +2,18 @@
 
 ## Unreleased
 
+## 0.3.1 — Preserve prompt revisions and worker controls
+
 ### Fixed
 - Apply and Undo reject stale prompt replacements from another tab, preserve the current prompt and Undo on storage failure, keep ownership across same-tab navigation, and confirm success only after the replacement commits
+- Abandoned Apply operations cannot restore stale Undo after later manual edits
+- Reopened workspaces remain locked across repeated failed reads until the committed prompt can be loaded
+- Pause and Resume retain their last intent while startup data loads
+- Retry code stays in the worker's static module graph, preventing repeated worker initialization and lost run controls in WebKit
+
+### Validation
+- Functional CI covers desktop/mobile Chromium, desktop Firefox, and Playwright WebKit; paired production benchmarks remain on desktop Chromium
+- Playwright WebKit coverage does not verify Safari itself. No data-schema migration or live provider calls are part of this release
 
 ## 0.3.0 — Focused prompt refinement
 
