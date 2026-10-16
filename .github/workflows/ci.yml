@@ -58,8 +58,8 @@ jobs:
       - name: Install and build immutable reader comparison
         working-directory: .reader-baseline
         run: npm ci && npm run build
-      - name: Install test browser in fresh hosted runner
-        run: npx playwright install --with-deps chromium
+      - name: Install test browsers in fresh hosted runner
+        run: npx playwright install --with-deps chromium firefox webkit
       - name: Record revision identity
         run: |
           echo "E2E_CANDIDATE_SHA=$(git rev-parse HEAD)" >> "$GITHUB_ENV"

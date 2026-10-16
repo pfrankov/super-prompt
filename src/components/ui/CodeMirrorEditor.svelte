@@ -1,6 +1,6 @@
 <script lang="ts">
   import { onMount, onDestroy } from 'svelte'
-  import { EditorState } from '@codemirror/state'
+  import { Compartment, EditorState } from '@codemirror/state'
   import { EditorView, keymap, lineNumbers, highlightActiveLine } from '@codemirror/view'
   import { defaultKeymap, history, historyKeymap } from '@codemirror/commands'
   import { markdown } from '@codemirror/lang-markdown'
@@ -25,6 +25,7 @@
   let host: HTMLDivElement | null = $state(null)
   let view: EditorView | null = null
   let applyingExternalValue = false
+  const readOnlyMode = new Compartment()
 
   function focusEditor() {
     view?.focus()
@@ -50,7 +51,7 @@
         keymap.of([...defaultKeymap, ...historyKeymap]),
         EditorView.lineWrapping,
         EditorView.contentAttributes.of({ 'aria-label': label || 'Editor', 'aria-multiline': 'true' }),
-        EditorView.editable.of(!readonly),
+        readOnlyMode.of([EditorState.readOnly.of(readonly), EditorView.editable.of(!readonly)]),
         EditorView.theme({
           '&': {
             backgroundColor: 'var(--bg-1)',
@@ -89,6 +90,15 @@
 
   onDestroy(() => {
     view?.destroy()
+  })
+
+  $effect(() => {
+    const readOnly = readonly
+    if (view && view.state.readOnly !== readOnly) {
+      view.dispatch({ effects: readOnlyMode.reconfigure([
+        EditorState.readOnly.of(readOnly), EditorView.editable.of(!readOnly),
+      ]) })
+    }
   })
 
   $effect(() => {

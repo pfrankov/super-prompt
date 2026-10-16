@@ -35,6 +35,16 @@ export default defineConfig({
       grepInvert: /@benchmark/,
       use: { ...devices['Pixel 7'], viewport: { width: 390, height: 844 }, reducedMotion: 'reduce' },
     },
+    {
+      name: 'firefox',
+      grepInvert: /@benchmark/,
+      use: { browserName: 'firefox', viewport: { width: 1440, height: 1000 } },
+    },
+    {
+      name: 'webkit',
+      grepInvert: /@benchmark/,
+      use: { browserName: 'webkit', viewport: { width: 1440, height: 1000 } },
+    },
   ],
   webServer: [
     {

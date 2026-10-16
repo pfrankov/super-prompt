@@ -228,6 +228,7 @@ export function createRunner(opts: {
   runId: string
   initialRun: Run
   initialCandidates: PromptCandidate[]
+  startPaused?: boolean
   ctx: Ctx
   send: Send
 }) {
@@ -767,13 +768,13 @@ export function createRunner(opts: {
     getCtx: () => ctx,
     start: async () => {
       stopRequested = false
-      pauseRequested = false
+      pauseRequested = opts.startPaused ?? false
       terminalPersisted = null
       terminalFailure = null
-      run = { ...run, status: 'running', errorMessage: null }
+      run = { ...run, status: pauseRequested ? 'paused' : 'running', errorMessage: null }
       try {
         await persistStatus()
-        emitStage('starting')
+        emitStage(pauseRequested ? 'paused' : 'starting')
         emitLog('info', `starting run ${runId}`)
         emitState()
         for (let i = run.iterationCount; i < ctx.config.iterationsCap; i++) {

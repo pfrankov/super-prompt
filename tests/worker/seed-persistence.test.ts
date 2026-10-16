@@ -66,6 +66,32 @@ function blockRequest(phase: 'mutation' | 'target' | 'judge') {
 }
 
 describe('seed candidates survive cancellation', () => {
+  it.each([true, false])('keeps the last startup pause intent (paused: %s)', async (paused) => {
+    const { createRun, getRun } = await import('../../src/lib/db/runs')
+    const run = await createRun(task.id, config)
+    let release!: (value: Task) => void
+    mocks.getTask.mockReturnValueOnce(new Promise((resolve) => { release = resolve }))
+    const targetStarted = blockRequest('target')
+    const running = send({ type: 'START', payload: { runId: run.id } })
+    try {
+      await vi.waitFor(() => expect(mocks.getTask).toHaveBeenCalled())
+      await send({ type: 'PAUSE', payload: { runId: run.id } })
+      if (!paused) await send({ type: 'RESUME', payload: { runId: run.id } })
+      release({ ...task })
+      if (paused) {
+        await vi.waitFor(async () => expect((await getRun(run.id))?.status).toBe('paused'))
+        expect(mocks.completion).not.toHaveBeenCalled()
+        await send({ type: 'RESUME', payload: { runId: run.id } })
+      }
+      await targetStarted
+    } finally {
+      release({ ...task })
+      await send({ type: 'STOP', payload: { runId: run.id } })
+      await running
+    }
+    expect((await getRun(run.id))?.status).toBe('stopped')
+  })
+
   it.each(['mutation', 'target', 'judge'] as const)('reloads the original seed after Stop during the first pending %s', async (phase) => {
     const { createRun, getRun, getCandidates, getIterations } = await import('../../src/lib/db/runs')
     const run = await createRun(task.id, config)

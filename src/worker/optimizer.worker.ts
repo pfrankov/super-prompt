@@ -15,6 +15,7 @@ let comparisonController: AbortController | null = null
 let starting = false
 let executing = false
 let stopDuringStart = false
+let pauseDuringStart = false
 
 function send(msg: WorkerToMain) {
   ;(self as unknown as Worker).postMessage(msg)
@@ -92,6 +93,7 @@ self.onmessage = async (e: MessageEvent<MainToWorker>) => {
         if (starting || executing) return
         starting = true
         stopDuringStart = false
+        pauseDuringStart = false
         runner = null
         const runId = msg.payload.runId
         try {
@@ -134,6 +136,7 @@ self.onmessage = async (e: MessageEvent<MainToWorker>) => {
           runId,
           initialRun: run,
           initialCandidates,
+          startPaused: pauseDuringStart,
           ctx: { task, items, provider, arbitrator, config: run.config },
           send,
         })
@@ -146,9 +149,11 @@ self.onmessage = async (e: MessageEvent<MainToWorker>) => {
         break
       }
       case 'PAUSE':
+        if (starting) { pauseDuringStart = true; break }
         await controlRunner?.pause()
         break
       case 'RESUME':
+        if (starting) { pauseDuringStart = false; break }
         await controlRunner?.resume()
         break
       case 'STOP':

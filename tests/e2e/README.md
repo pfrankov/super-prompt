@@ -8,7 +8,7 @@ Both route interception and the fixture server's CSP constrain browser traffic.
 
 ## Acceptance suite
 
-- Desktop Chromium (1440×1000) and mobile Chromium (390×844, touch, reduced motion)
+- Desktop Chromium, Firefox, and Playwright WebKit (1440×1000), plus mobile Chromium (390×844, touch, reduced motion)
 - Fresh prompt → workspace demo configuration → built-in demo run → completed
   result → A/B comparison → exact JSON export → apply → reload
 - Pause, navigate away/back, resume, stop, and reload recovery
@@ -29,11 +29,17 @@ Both route interception and the fixture server's CSP constrain browser traffic.
   behind the Original wording disclosure; the proposed prompt is the default view
 - Use this revision and Undo last apply preserve exact text, including Unicode
   and blank lines; undo survives same-tab reload and is invalidated by later edits
+- Stale Apply/Undo preserve edits saved in a second tab across reload; an
+  intentional Apply retry uses the latest saved prompt as its undo baseline
 - A 5,000-line complete replacement keeps diff rendering within 200 chunks and
   32,000 characters per page, explicitly reports limited matching, replaces
   pages rather than appending them, and preserves full export/apply/undo content
 
 ## Evidence and interpretation
+
+Functional scenarios run on all four projects, including both two-tab stale
+Apply/Undo regressions. Cases tagged `@benchmark` run only on desktop Chromium.
+Playwright WebKit coverage does not verify Safari itself.
 
 The job retains an HTML report, JUnit results, successful workflow screenshots,
 failure screenshots/video/traces, revision metadata, and `benchmark-comparison.json`.

@@ -1,5 +1,10 @@
 # Changelog
 
+## Unreleased
+
+### Fixed
+- Apply and Undo reject stale prompt replacements from another tab, preserve the current prompt and Undo on storage failure, keep ownership across same-tab navigation, and confirm success only after the replacement commits
+
 ## 0.3.0 — Focused prompt refinement
 
 ### Changed
