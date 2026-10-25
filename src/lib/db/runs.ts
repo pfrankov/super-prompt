@@ -9,6 +9,13 @@ import type {
 import { newId } from '../util/id'
 import { TaskNotFoundError } from './tasks'
 
+export class RunNotFoundError extends Error {
+  constructor(readonly runId: string) {
+    super('This optimization run no longer exists.')
+    this.name = 'RunNotFoundError'
+  }
+}
+
 export async function createRun(taskId: string, config: RunConfig, signal?: AbortSignal): Promise<Run> {
   signal?.throwIfAborted()
   const d = await db()
@@ -89,7 +96,18 @@ export async function listRunsPage(
 
 export async function addCandidate(c: PromptCandidate): Promise<void> {
   const d = await db()
-  await d.put('candidates', c)
+  const tx = d.transaction(['runs', 'candidates'], 'readwrite')
+  const finished = tx.done
+  void finished.catch(() => {})
+  try {
+    if (!await tx.objectStore('runs').get(c.runId)) throw new RunNotFoundError(c.runId)
+    await tx.objectStore('candidates').put(c)
+    await finished
+  } catch (error) {
+    try { tx.abort() } catch { /* Already settled. */ }
+    await finished.catch(() => {})
+    throw error
+  }
 }
 
 export async function getCandidate(id: string): Promise<PromptCandidate | undefined> {
@@ -125,10 +143,19 @@ export async function getTopCandidates(
 
 export async function addIteration(it: IterationRecord, pairs: PairwiseResult[]): Promise<void> {
   const d = await db()
-  const tx = d.transaction(['iterations', 'pairs'], 'readwrite')
-  await tx.objectStore('iterations').put(it)
-  for (const p of pairs) await tx.objectStore('pairs').put(p)
-  await tx.done
+  const tx = d.transaction(['runs', 'iterations', 'pairs'], 'readwrite')
+  const finished = tx.done
+  void finished.catch(() => {})
+  try {
+    if (!await tx.objectStore('runs').get(it.runId)) throw new RunNotFoundError(it.runId)
+    await tx.objectStore('iterations').put(it)
+    for (const p of pairs) await tx.objectStore('pairs').put(p)
+    await finished
+  } catch (error) {
+    try { tx.abort() } catch { /* Already settled. */ }
+    await finished.catch(() => {})
+    throw error
+  }
 }
 
 export async function getIterations(runId: string): Promise<IterationRecord[]> {

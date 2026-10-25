@@ -4,8 +4,10 @@ import * as databaseModule from '../../src/lib/db/db'
 import { db, wipeAll } from '../../src/lib/db/db'
 import { createTask, deleteTask } from '../../src/lib/db/tasks'
 import { createDataset, addItems } from '../../src/lib/db/datasets'
+import { addCandidate, addIteration, createRun } from '../../src/lib/db/runs'
 import { stagePromptDraft, readPromptDraft } from '../../src/lib/db/prompt-drafts'
 import { storeAppliedRevision, readAppliedRevision } from '../../src/lib/improve/applied-revision'
+import type { IterationRecord, PairwiseResult, PromptCandidate, RunConfig } from '../../src/lib/types'
 
 beforeEach(async () => { await wipeAll(); sessionStorage.clear() })
 afterEach(() => vi.restoreAllMocks())
@@ -67,6 +69,41 @@ it('a failed wipe rolls back every store and retains all recovery copies', async
   expect(await database.count('datasets_items')).toBe(1)
   expect(readPromptDraft(task.id)).toBe('Latest draft')
   expect(readAppliedRevision(task.id, 'Latest draft')).toEqual({ before: 'Earlier', after: 'Latest draft' })
+})
+
+it.each(['delete first', 'write first'] as const)('serializes run results against task deletion: %s', async (order) => {
+  const task = await createTask()
+  const run = await createRun(task.id, {} as RunConfig)
+  const candidate: PromptCandidate = {
+    id: 'candidate', runId: run.id, parentId: null, text: 'Prompt', source: 'seed', score: null,
+    wins: 0, losses: 0, ties: 0, iterations: 0, tokensIn: 0, tokensOut: 0, createdAt: 1,
+  }
+  const iteration: IterationRecord = {
+    id: 'iteration', runId: run.id, index: 0, parentCandidateId: candidate.id,
+    childCandidateId: candidate.id, sampleItemIds: [], aggregatedFeedback: '',
+    tokensIn: 0, tokensOut: 0, startedAt: 1, finishedAt: 2,
+  }
+  const pair: PairwiseResult = {
+    id: 'pair', iterationId: iteration.id, itemId: 'item', outputA: '', outputB: '',
+    verdict: { winner: 'tie', scoreA: 0, scoreB: 0, reasoning: '', feedbackA: '', feedbackB: '' },
+    abSwapped: false, tokensIn: 0, tokensOut: 0, latencyMs: 0,
+  }
+  const writes = [() => addCandidate(candidate), () => addIteration(iteration, [pair])]
+  const operations = order === 'delete first'
+    ? [deleteTask(task.id), ...writes.map((write) => write())]
+    : [...writes.map((write) => write()), deleteTask(task.id)]
+
+  const outcomes = await Promise.allSettled(operations)
+
+  expect(outcomes.map((outcome) => outcome.status)).toEqual(order === 'delete first'
+    ? ['fulfilled', 'rejected', 'rejected']
+    : ['fulfilled', 'fulfilled', 'fulfilled'])
+  const database = await db()
+  expect(await database.get('tasks', task.id)).toBeUndefined()
+  expect(await database.get('runs', run.id)).toBeUndefined()
+  expect(await database.count('candidates')).toBe(0)
+  expect(await database.count('iterations')).toBe(0)
+  expect(await database.count('pairs')).toBe(0)
 })
 
 

@@ -357,7 +357,7 @@
     "pageRange": "{from}–{to} из {total} запусков"
   },
   "sidebar": {
-    "version": "v0.3.1"
+    "version": "v0.3.2"
   },
   "compare": {
     "title": "Сравнить A vs B",
