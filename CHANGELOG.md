@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+## 0.3.2 — Keep deleted prompts deleted
+
+### Fixed
+- Late worker results cannot recreate candidate, iteration, or comparison records after their prompt was deleted in another tab
+
 ## 0.3.1 — Preserve prompt revisions and worker controls
 
 ### Fixed

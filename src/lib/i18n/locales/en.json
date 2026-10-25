@@ -355,7 +355,7 @@
     "pageRange": "{from}–{to} of {total} runs"
   },
   "sidebar": {
-    "version": "v0.3.1"
+    "version": "v0.3.2"
   },
   "compare": {
     "title": "Compare A vs B",
